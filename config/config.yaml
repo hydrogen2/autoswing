@@ -1,0 +1,28 @@
+# Autoswing configuration.
+# Risk values here are HUMAN-ONLY: the agent must never edit this file.
+
+broker:
+  host: 127.0.0.1
+  # Paper gateway port. Live (4001) is refused unless live_trading is true
+  # AND the environment variable AUTOSWING_LIVE=1 is set. Both, on purpose.
+  port: 4002
+  client_id: 1
+  live_trading: false
+  connect_timeout_s: 15
+
+journal:
+  dir: journal
+
+# Phase 1 will consume these. Defined now so the numbers live in one place.
+risk:
+  equity_baseline: 50000
+  risk_per_trade_pct: 1.0
+  max_position_pct: 15.0
+  max_open_positions: 10
+  max_gross_exposure_pct: 100.0
+  daily_loss_halt_pct: 3.0
+  max_drawdown_kill_pct: 15.0
+  max_core_overlap_positions: 1
+  min_avg_dollar_volume: 5000000
+  # Owner's long-term core holdings; bot flags/caps overlap (gray-zone rule).
+  core_holdings: []

@@ -1,0 +1,16 @@
+# Credentials — never commit
+.env
+docker/.env
+
+# Runtime data
+journal/
+*.jsonl
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+dist/
+*.egg-info/
+.pytest_cache/
+uv.lock

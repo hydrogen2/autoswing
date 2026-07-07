@@ -1,0 +1,23 @@
+services:
+  ib-gateway:
+    image: ghcr.io/gnzsnz/ib-gateway:stable
+    restart: unless-stopped
+    environment:
+      TWS_USERID: ${TWS_USERID}
+      TWS_PASSWORD: ${TWS_PASSWORD}
+      TRADING_MODE: ${TRADING_MODE:-paper}
+      READ_ONLY_API: "no"
+      TWS_ACCEPT_INCOMING: accept
+      TIME_ZONE: America/New_York
+      # Auto-restart keeps the session alive across IBKR's nightly reset.
+      AUTO_RESTART_TIME: "11:59 PM"
+    ports:
+      # Bind to localhost only: the API port must never be reachable
+      # from outside this machine.
+      - "127.0.0.1:4002:4004"  # paper (container maps paper->4004 internally)
+      - "127.0.0.1:4001:4003"  # live (unused until Phase 5)
+    volumes:
+      - ibgateway_settings:/home/ibgateway
+
+volumes:
+  ibgateway_settings:
