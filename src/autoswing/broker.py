@@ -42,7 +42,9 @@ class Broker:
         self.ib.connect(
             b.host, b.port, clientId=b.client_id, timeout=b.connect_timeout_s
         )
-        self.ib.reqMarketDataType(DELAYED)
+        # Delayed-frozen: delayed quotes in market hours, last-known
+        # values when closed. The paper phase runs entirely on this.
+        self.ib.reqMarketDataType(DELAYED_FROZEN)
         self.journal.record(
             "broker.connect", host=b.host, port=b.port, client_id=b.client_id,
             server_version=self.ib.client.serverVersion(),
@@ -106,8 +108,14 @@ class Broker:
 
     def get_quote(self, symbol: str) -> dict:
         contract = self._qualified_stock(symbol)
-        ticker = self.ib.reqMktData(contract, "", snapshot=True)
-        self.ib.sleep(2.5)  # allow the snapshot to arrive
+        # Streaming (not snapshot): snapshot requests ignore delayed-frozen
+        # mode and come back empty without a real-time subscription.
+        # Delayed data ticks in within ~10s; poll then cancel.
+        ticker = self.ib.reqMktData(contract, "", snapshot=False)
+        for _ in range(30):
+            self.ib.sleep(0.5)
+            if any(_num(v) is not None for v in (ticker.last, ticker.close, ticker.bid)):
+                break
         quote = {
             "symbol": symbol.upper(),
             "bid": _num(ticker.bid),
