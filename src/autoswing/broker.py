@@ -207,6 +207,41 @@ class Broker:
         self.journal.record("broker.flatten_all", result=result)
         return result
 
+    def account_state(self):
+        """Snapshot for the risk gate: net liq, positions, working entry orders."""
+        from .risk_gate import AccountState, OpenOrderInfo, PositionInfo
+
+        net_liq = next(
+            (float(r.value) for r in self.ib.accountSummary()
+             if r.tag == "NetLiquidation"),
+            None,
+        )
+        if net_liq is None:
+            raise RuntimeError("could not read NetLiquidation from account summary")
+
+        positions = [
+            PositionInfo(
+                symbol=p.contract.symbol,
+                quantity=p.position,
+                notional=abs(p.position) * p.avgCost,
+            )
+            for p in self.ib.positions()
+            if p.contract.secType == "STK" and p.position != 0
+        ]
+        open_orders = [
+            OpenOrderInfo(
+                symbol=t.contract.symbol,
+                # Bracket children carry parentId; bare parentId==0 orders
+                # are entries.
+                is_entry=t.order.parentId == 0,
+                notional=t.order.totalQuantity * (t.order.lmtPrice or 0),
+            )
+            for t in self.ib.openTrades()
+        ]
+        return AccountState(
+            net_liquidation=net_liq, positions=positions, open_orders=open_orders
+        )
+
     # -- helpers ---------------------------------------------------------------
 
     def _qualified_stock(self, symbol: str) -> Stock:

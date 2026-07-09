@@ -47,6 +47,27 @@ def main() -> None:
 
     sub.add_parser("smoke-test", help="Phase 0 exit test against the paper account")
 
+    p = sub.add_parser(
+        "propose-trade",
+        help="Submit a trade proposal JSON through the risk gate; places the "
+        "bracket only if every rule passes. This is the agent's ONLY entry path.",
+    )
+    p.add_argument(
+        "proposal", help="path to proposal JSON file, or '-' to read stdin"
+    )
+    p.add_argument(
+        "--dry-run", action="store_true",
+        help="evaluate the gate but never place the order",
+    )
+
+    sub.add_parser("gate-status", help="Virtual equity, HWM, drawdown, kill switch")
+
+    r = sub.add_parser(
+        "gate-reset",
+        help="HUMAN ONLY: clear a tripped kill switch and re-anchor equity",
+    )
+    r.add_argument("--i-am-sure", action="store_true")
+
     args = parser.parse_args()
     config = load_config()
     journal = Journal(config.journal_dir)
@@ -88,7 +109,55 @@ def _dispatch(broker: Broker, args):
         return broker.flatten_all()
     if args.command == "smoke-test":
         return _smoke_test(broker)
+    if args.command == "propose-trade":
+        return _propose_trade(broker, args)
+    if args.command == "gate-status":
+        gate = _make_gate(broker)
+        return gate.status(broker.account_state())
+    if args.command == "gate-reset":
+        if not args.i_am_sure:
+            raise ValueError("gate-reset requires --i-am-sure")
+        gate = _make_gate(broker)
+        before = gate.status(broker.account_state())
+        gate.reset_kill()
+        broker.journal.record("gate.reset", before=before)
+        return {"reset": True, "state_before": before}
     raise ValueError(f"unknown command {args.command!r}")
+
+
+def _make_gate(broker: Broker):
+    from .config import PROJECT_ROOT
+    from .risk_gate import RiskGate
+
+    return RiskGate(
+        risk_config=broker.config.risk,
+        state_path=PROJECT_ROOT / "state" / "gate_state.json",
+    )
+
+
+def _propose_trade(broker: Broker, args):
+    from .risk_gate import TradeProposal
+
+    raw = sys.stdin.read() if args.proposal == "-" else open(args.proposal).read()
+    proposal = TradeProposal(**json.loads(raw))
+
+    gate = _make_gate(broker)
+    decision = gate.evaluate(proposal, broker.account_state())
+    broker.journal.record(
+        "gate.decision",
+        proposal=json.loads(raw),
+        decision=decision.to_dict(),
+        dry_run=args.dry_run,
+    )
+
+    result = {
+        "approved": decision.approved,
+        "decision": decision.to_dict(),
+        "placed": None,
+    }
+    if decision.approved and not args.dry_run:
+        result["placed"] = broker.place_bracket_order(proposal.to_bracket())
+    return result
 
 
 def _smoke_test(broker: Broker) -> dict:

@@ -24,5 +24,10 @@ risk:
   max_drawdown_kill_pct: 15.0
   max_core_overlap_positions: 1
   min_avg_dollar_volume: 5000000
+  min_price: 5.0
+  earnings_blackout_days: 5
+  allow_short: false
+  allow_outside_rth: false
+  pdt_min_equity: 25000
   # Owner's long-term core holdings; bot flags/caps overlap (gray-zone rule).
   core_holdings: []

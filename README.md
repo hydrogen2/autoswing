@@ -2,7 +2,7 @@
 
 Autonomous swing-trading agent. See [PLAN.md](PLAN.md) for the full design.
 
-**Current status: Phase 0 — broker plumbing.** Paper trading only.
+**Current status: Phase 1 — risk gate complete.** Paper trading only.
 
 ## One-time setup
 
@@ -35,7 +35,29 @@ uv run autoswing get-quote NVDA
 uv run autoswing place-bracket-order AAPL BUY 10 --entry 150 --stop 142.5 --target 165
 uv run autoswing cancel-order 42
 uv run autoswing flatten-all --i-am-sure   # emergency: close everything
+
+# The agent's ONLY entry path — proposal JSON through the risk gate:
+echo '{"symbol":"XOM","action":"BUY","quantity":60,"entry_limit":100.0,
+  "stop_loss":97.0,"take_profit":112.0,"rationale":"...",
+  "next_earnings_date":"2026-10-30","avg_dollar_volume":900000000}' \
+  | uv run autoswing propose-trade - [--dry-run]
+
+uv run autoswing gate-status               # virtual equity, HWM, drawdown, kill switch
+uv run autoswing gate-reset --i-am-sure    # HUMAN ONLY: clear tripped kill switch
 ```
+
+## Risk gate
+
+Deterministic rules in `src/autoswing/risk_gate.py`; limits in
+`config/config.yaml` (human-only). Rules: kill switch (−15% drawdown, sticky
+until human reset), daily loss halt (−3%), 1% risk/trade, 15% max position,
+10 max positions, 100% gross exposure, duplicate suppression, earnings
+blackout (unknown date = rejection), liquidity floor, min price, long-only,
+market hours, core-overlap cap (1, flagged), PDT guard (dormant ≥ $25k).
+
+Sizing uses **virtual equity** = `equity_baseline + (net_liq − anchor)`, so
+the unreset $1M paper balance cannot inflate positions. State persists in
+`state/gate_state.json`.
 
 ## Safety model (Phase 0)
 
