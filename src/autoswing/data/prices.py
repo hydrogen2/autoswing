@@ -39,7 +39,7 @@ def fetch_history(symbols: list[str], period: str = "3mo") -> dict[str, pd.DataF
     out = {}
     for sym in symbols:
         try:
-            df = data[sym] if len(symbols) > 1 else data
+            df = data[sym] if isinstance(data.columns, pd.MultiIndex) else data
         except KeyError:
             continue
         df = df.dropna(subset=["Close"])

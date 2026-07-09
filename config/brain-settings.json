@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(uv run autoswing:*)",
+      "Bash(cd /home/supper-user/autoswing && uv run autoswing:*)",
+      "Read(//home/supper-user/autoswing/**)",
+      "WebSearch",
+      "WebFetch(domain:*)"
+    ],
+    "deny": [
+      "Edit",
+      "Write",
+      "NotebookEdit",
+      "Bash(uv run autoswing gate-reset:*)",
+      "Bash(uv run autoswing flatten-all:*)",
+      "Read(//home/supper-user/autoswing/docker/.env)",
+      "Read(//home/supper-user/autoswing/config/brain-settings.json)"
+    ],
+    "defaultMode": "default"
+  }
+}

@@ -31,3 +31,9 @@ risk:
   pdt_min_equity: 25000
   # Owner's long-term core holdings; bot flags/caps overlap (gray-zone rule).
   core_holdings: []
+
+strategy:
+  # Deterministic exits enforced by manage-positions, not the LLM.
+  max_hold_days: 15               # trading days; time-box exit
+  exit_before_earnings_days: 2    # force-exit when next report is this close
+  benchmark_symbol: VOO

@@ -31,6 +31,7 @@ class Config:
     broker: BrokerConfig
     journal_dir: Path
     risk: dict
+    strategy: dict
     path: Path
 
 
@@ -50,7 +51,10 @@ def load_config(path: Path | None = None) -> Config:
     enforce_paper_interlock(broker)
 
     journal_dir = PROJECT_ROOT / raw.get("journal", {}).get("dir", "journal")
-    return Config(broker=broker, journal_dir=journal_dir, risk=raw.get("risk", {}), path=path)
+    return Config(
+        broker=broker, journal_dir=journal_dir, risk=raw.get("risk", {}),
+        strategy=raw.get("strategy", {}), path=path,
+    )
 
 
 def enforce_paper_interlock(broker: BrokerConfig) -> None:

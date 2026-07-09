@@ -2,7 +2,17 @@
 
 Autonomous swing-trading agent. See [PLAN.md](PLAN.md) for the full design.
 
-**Current status: Phase 2 — data layer complete.** Paper trading only.
+**Current status: Phase 3 — brain live, fully auto on paper.**
+
+The brain is a headless Claude Code run (`scripts/brain_run.sh`, subscription
+auth, no API key) scheduled via `/etc/cron.d/autoswing` at four ET windows:
+premarket 08:00, entry 10:00, midday 12:30, preclose 15:30 (dual UTC entries
++ ET guard handle DST). Playbook: `prompts/brain.md`; permissions:
+`config/brain-settings.json` (read-only FS, `uv run autoswing` commands and
+web search only; gate-reset and flatten-all denied). Deterministic exits —
+time-box (15 trading days), pre-earnings buffer (2 days), unverifiable
+earnings date — are enforced by `manage-positions --enforce`, not the LLM.
+`benchmark-mark` records daily equity vs VOO in state/benchmark.jsonl.
 
 ```bash
 uv run autoswing scan-candidates --days-back 3   # PEAD candidates from recent reporters

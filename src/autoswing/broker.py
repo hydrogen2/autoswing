@@ -207,6 +207,34 @@ class Broker:
         self.journal.record("broker.flatten_all", result=result)
         return result
 
+    def close_position(self, symbol: str) -> dict:
+        """Cancel the symbol's working orders, then close any position at
+        market. Used by deterministic exits (time-box, pre-earnings)."""
+        sym = symbol.upper()
+        cancelled = []
+        for t in list(self.ib.openTrades()):
+            if t.contract.symbol == sym:
+                self.ib.cancelOrder(t.order)
+                cancelled.append(t.order.orderId)
+        self.ib.sleep(1.0)
+
+        closing_order = None
+        for pos in self.ib.positions():
+            if pos.contract.symbol == sym and pos.position != 0:
+                action = "SELL" if pos.position > 0 else "BUY"
+                contract = self._qualified_stock(sym)
+                trade = self.ib.placeOrder(contract, MarketOrder(action, abs(pos.position)))
+                self.ib.sleep(1.5)
+                closing_order = {
+                    "order_id": trade.order.orderId, "action": action,
+                    "quantity": abs(pos.position),
+                    "status": trade.orderStatus.status,
+                }
+        result = {"symbol": sym, "cancelled_order_ids": cancelled,
+                  "closing_order": closing_order}
+        self.journal.record("broker.close_position", result=result)
+        return result
+
     def account_state(self):
         """Snapshot for the risk gate: net liq, positions, working entry orders."""
         from .risk_gate import AccountState, OpenOrderInfo, PositionInfo

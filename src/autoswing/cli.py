@@ -81,12 +81,33 @@ def main() -> None:
     )
     n.add_argument("symbol")
 
+    m = sub.add_parser(
+        "manage-positions",
+        help="Deterministic exits: time-box, pre-earnings, unverifiable earnings",
+    )
+    m.add_argument(
+        "--enforce", action="store_true",
+        help="actually close positions flagged for exit (default: report only)",
+    )
+
+    sub.add_parser(
+        "benchmark-mark",
+        help="Record today's virtual equity vs the benchmark (VOO) close",
+    )
+
+    jn = sub.add_parser(
+        "journal-note", help="Append a free-form note (e.g. the brain's digest)"
+    )
+    jn.add_argument("note")
+
     args = parser.parse_args()
     config = load_config()
     journal = Journal(config.journal_dir)
 
     try:
-        if args.command in ("scan-candidates", "next-earnings"):
+        if args.command == "journal-note":
+            result = journal.record("brain.note", note=args.note)
+        elif args.command in ("scan-candidates", "next-earnings"):
             result = _dispatch_data(config, journal, args)
         else:
             with Broker(config, journal) as broker:
@@ -138,7 +159,106 @@ def _dispatch(broker: Broker, args):
         gate.reset_kill()
         broker.journal.record("gate.reset", before=before)
         return {"reset": True, "state_before": before}
+    if args.command == "manage-positions":
+        return _manage_positions(broker, enforce=args.enforce)
+    if args.command == "benchmark-mark":
+        return _benchmark_mark(broker)
     raise ValueError(f"unknown command {args.command!r}")
+
+
+def _meta_path():
+    from .config import PROJECT_ROOT
+    return PROJECT_ROOT / "state" / "positions.json"
+
+
+def _manage_positions(broker: Broker, enforce: bool):
+    from datetime import date
+
+    from .data.earnings import next_earnings_date
+    from .manage import PositionMeta, evaluate_position, load_meta, save_meta
+
+    meta = load_meta(_meta_path())
+    snapshot = broker.get_positions()
+    held = {p["symbol"]: p for p in snapshot["positions"] if p["quantity"] != 0}
+
+    # Reconcile: drop meta for closed positions; adopt untracked ones today
+    # (conservative: their time-box starts now, and they still get the
+    # earnings check like everything else).
+    for sym in list(meta):
+        if sym not in held:
+            broker.journal.record("manage.position_closed", symbol=sym,
+                                  meta=meta[sym].__dict__)
+            del meta[sym]
+    adopted = []
+    for sym in held:
+        if sym not in meta:
+            meta[sym] = PositionMeta(
+                symbol=sym, placed_date=date.today().isoformat(),
+                entry_limit=held[sym]["avg_cost"], stop_loss=0.0, take_profit=0.0,
+                rationale="adopted: position existed without metadata",
+            )
+            adopted.append(sym)
+
+    report = []
+    for sym, m in meta.items():
+        ned = next_earnings_date(sym)
+        action, detail = evaluate_position(
+            sym, m.placed_date, ned, broker.config.strategy
+        )
+        entry = {"symbol": sym, "action": action, "detail": detail,
+                 "next_earnings": ned, "enforced": False}
+        if enforce and action != "hold":
+            entry["close_result"] = broker.close_position(sym)
+            entry["enforced"] = True
+            del meta[sym]
+        report.append(entry)
+
+    save_meta(_meta_path(), meta)
+    result = {"positions": report, "adopted_untracked": adopted, "enforce": enforce}
+    broker.journal.record("manage.review", result=result)
+    return result
+
+
+def _benchmark_mark(broker: Broker):
+    import json as _json
+    from datetime import date
+
+    from .config import PROJECT_ROOT
+    from .data.prices import fetch_history
+
+    gate = _make_gate(broker)
+    status = gate.status(broker.account_state())
+
+    bench_sym = broker.config.strategy.get("benchmark_symbol", "VOO")
+    hist = fetch_history([bench_sym], period="5d")
+    bench_close = float(hist[bench_sym]["Close"].iloc[-1]) if bench_sym in hist else None
+
+    path = PROJECT_ROOT / "state" / "benchmark.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    first = None
+    if path.exists():
+        lines = path.read_text().strip().splitlines()
+        if lines:
+            first = _json.loads(lines[0])
+
+    entry = {
+        "date": date.today().isoformat(),
+        "virtual_equity": status["virtual_equity"],
+        "benchmark_close": bench_close,
+        "drawdown_pct": status["drawdown_pct"],
+        "kill_tripped": status["kill_tripped"],
+    }
+    if first and first.get("benchmark_close") and bench_close:
+        entry["bot_return_pct"] = round(
+            100 * (status["virtual_equity"] / first["virtual_equity"] - 1), 2
+        )
+        entry["benchmark_return_pct"] = round(
+            100 * (bench_close / first["benchmark_close"] - 1), 2
+        )
+    with open(path, "a") as f:
+        f.write(_json.dumps(entry) + "\n")
+    broker.journal.record("benchmark.mark", result=entry)
+    return entry
 
 
 def _dispatch_data(config, journal: Journal, args):
@@ -191,7 +311,21 @@ def _propose_trade(broker: Broker, args):
         "placed": None,
     }
     if decision.approved and not args.dry_run:
+        from datetime import date
+
+        from .manage import PositionMeta, load_meta, save_meta
+
         result["placed"] = broker.place_bracket_order(proposal.to_bracket())
+        meta = load_meta(_meta_path())
+        meta[proposal.symbol.upper()] = PositionMeta(
+            symbol=proposal.symbol.upper(),
+            placed_date=date.today().isoformat(),
+            entry_limit=proposal.entry_limit,
+            stop_loss=proposal.stop_loss,
+            take_profit=proposal.take_profit,
+            rationale=proposal.rationale,
+        )
+        save_meta(_meta_path(), meta)
     return result
 
 
