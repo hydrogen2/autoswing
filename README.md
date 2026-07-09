@@ -2,7 +2,16 @@
 
 Autonomous swing-trading agent. See [PLAN.md](PLAN.md) for the full design.
 
-**Current status: Phase 1 — risk gate complete.** Paper trading only.
+**Current status: Phase 2 — data layer complete.** Paper trading only.
+
+```bash
+uv run autoswing scan-candidates --days-back 3   # PEAD candidates from recent reporters
+uv run autoswing next-earnings NVDA             # gate-compatible next-report lookup
+```
+Data sources (free tier): Nasdaq public earnings calendar (dates, EPS
+estimate/actual, surprise), yfinance (prices, reactions, ADV, next report
+dates). Data honesty rule: unverifiable facts are reported as "unknown",
+which the risk gate rejects — the pipeline never guesses.
 
 ## One-time setup
 

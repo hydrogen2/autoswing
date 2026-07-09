@@ -68,13 +68,29 @@ def main() -> None:
     )
     r.add_argument("--i-am-sure", action="store_true")
 
+    s = sub.add_parser(
+        "scan-candidates",
+        help="PEAD scan: recent reporters -> reaction metrics -> floors",
+    )
+    s.add_argument("--days-back", type=int, default=3)
+    s.add_argument("--min-move", type=float, default=3.0,
+                   help="min abs reaction move %% to qualify")
+
+    n = sub.add_parser(
+        "next-earnings", help="Next scheduled report date for a symbol (or 'unknown')"
+    )
+    n.add_argument("symbol")
+
     args = parser.parse_args()
     config = load_config()
     journal = Journal(config.journal_dir)
 
     try:
-        with Broker(config, journal) as broker:
-            result = _dispatch(broker, args)
+        if args.command in ("scan-candidates", "next-earnings"):
+            result = _dispatch_data(config, journal, args)
+        else:
+            with Broker(config, journal) as broker:
+                result = _dispatch(broker, args)
     except Exception as e:
         journal.record("cli.error", command=args.command, error=str(e))
         print(json.dumps({"ok": False, "error": str(e)}))
@@ -123,6 +139,25 @@ def _dispatch(broker: Broker, args):
         broker.journal.record("gate.reset", before=before)
         return {"reset": True, "state_before": before}
     raise ValueError(f"unknown command {args.command!r}")
+
+
+def _dispatch_data(config, journal: Journal, args):
+    if args.command == "scan-candidates":
+        from .data.candidates import scan
+
+        result = scan(config.risk, days_back=args.days_back, min_move_pct=args.min_move)
+        journal.record(
+            "data.scan_candidates",
+            scanned=result["scanned"], passing=result["passing"],
+            symbols=[c["symbol"] for c in result["candidates"]],
+        )
+        return result
+    if args.command == "next-earnings":
+        from .data.earnings import next_earnings_date
+
+        return {"symbol": args.symbol.upper(),
+                "next_earnings_date": next_earnings_date(args.symbol)}
+    raise ValueError(f"unknown data command {args.command!r}")
 
 
 def _make_gate(broker: Broker):
