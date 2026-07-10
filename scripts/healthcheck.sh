@@ -40,7 +40,7 @@ run_check "get-positions"     uv run autoswing get-positions
 # live login holds the market-data seat (single-seat sharing). That's a
 # WARN (environmental), not a FAIL (broken component).
 QOUT=$(uv run autoswing get-quote AAPL 2>&1)
-QSTATE=$(echo "$QOUT" | python3 -c "
+QSTATE=$(echo "$QOUT" | sed -n '/^{/,$p' | python3 -c "
 import json, sys
 try:
     d = json.load(sys.stdin)
