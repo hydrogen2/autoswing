@@ -35,7 +35,25 @@ run_check() { # name, command...
 
 run_check "gate-status"       uv run autoswing gate-status
 run_check "get-positions"     uv run autoswing get-positions
-run_check "get-quote"         uv run autoswing get-quote AAPL
+
+# Quote is special: an empty-but-successful quote usually means the owner's
+# live login holds the market-data seat (single-seat sharing). That's a
+# WARN (environmental), not a FAIL (broken component).
+QOUT=$(uv run autoswing get-quote AAPL 2>&1)
+QSTATE=$(echo "$QOUT" | python3 -c "
+import json, sys
+try:
+    d = json.load(sys.stdin)
+    if not d.get('ok'): print('fail')
+    elif d['result'].get('close') or d['result'].get('last'): print('ok')
+    else: print('blackout')
+except Exception: print('fail')
+")
+case "$QSTATE" in
+  ok)       echo "$(date -Is) OK   get-quote" >>"$LOG" ;;
+  blackout) echo "$(date -Is) WARN get-quote: empty quote — market-data seat likely held by owner's live session" >>"$LOG" ;;
+  *)        echo "$(date -Is) FAIL get-quote" >>"$LOG"; echo "$QOUT" | tail -15 >>"$LOG"; FAILS+=("get-quote") ;;
+esac
 run_check "scan-candidates"   uv run autoswing scan-candidates --days-back 2
 run_check "next-earnings"     uv run autoswing next-earnings MSFT
 run_check "manage-positions"  uv run autoswing manage-positions
