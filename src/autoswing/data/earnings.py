@@ -51,13 +51,26 @@ def _money(s: str | None) -> float | None:
     return -value if neg else value
 
 
+def _number(v) -> float | None:
+    """Tolerant float: 'N/A', '', None, or junk -> None. The calendar feed
+    uses 'N/A' freely and a missing datum must never crash the scan."""
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _int(v) -> int | None:
+    f = _number(v)
+    return int(f) if f is not None else None
+
+
 def parse_calendar_rows(rows: list[dict], day: date) -> list[Report]:
     reports = []
     for r in rows:
         symbol = (r.get("symbol") or "").strip().upper()
         if not symbol:
             continue
-        surprise = r.get("surprise")
         reports.append(
             Report(
                 symbol=symbol,
@@ -65,8 +78,8 @@ def parse_calendar_rows(rows: list[dict], day: date) -> list[Report]:
                 timing=TIMING.get(r.get("time"), "unknown"),
                 eps_actual=_money(r.get("eps")),
                 eps_forecast=_money(r.get("epsForecast")),
-                surprise_pct=float(surprise) if surprise not in (None, "", "N/A") else None,
-                num_estimates=int(r["noOfEsts"]) if r.get("noOfEsts") else None,
+                surprise_pct=_number(r.get("surprise")),
+                num_estimates=_int(r.get("noOfEsts")),
                 market_cap=_money(r.get("marketCap")),
                 company=r.get("name", ""),
             )

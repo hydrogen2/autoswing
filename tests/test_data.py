@@ -47,6 +47,19 @@ class TestCalendarParsing:
         assert r.eps_actual is None
         assert r.surprise_pct is None
 
+    def test_na_strings_tolerated(self):
+        # Regression: live feed sent noOfEsts='N/A' and crashed the scan
+        # (2026-07-09, bot correctly stood down and flagged it).
+        rows = [{
+            "symbol": "XYZ", "time": "time-after-hours",
+            "noOfEsts": "N/A", "surprise": "N/A", "eps": "N/A",
+            "epsForecast": "N/A", "marketCap": "N/A",
+        }]
+        r = parse_calendar_rows(rows, date(2026, 7, 7))[0]
+        assert r.num_estimates is None
+        assert r.surprise_pct is None
+        assert r.market_cap is None
+
     def test_blank_symbol_dropped(self):
         assert parse_calendar_rows([{"symbol": " "}], date(2026, 7, 7)) == []
 
