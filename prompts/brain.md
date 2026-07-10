@@ -57,7 +57,9 @@ From `gate-status` take virtual_equity. Then:
 You will be told which window this run is. Do that window's checklist only.
 
 ### premarket (~08:00 ET, market closed)
-1. `gate-status` — if kill_tripped, journal-note it and STOP.
+1. `gate-status` — if kill_tripped, journal-note it and STOP. Also glance at
+   today's/yesterday's journal for HEALTHCHECK FAILURE notes; if a component
+   you need is broken, work around it or stand down loudly.
 2. `get-positions`, `manage-positions` (report mode) — note anything
    flagged for exit later today.
 3. `scan-candidates --days-back 3` — shortlist candidates worth watching at

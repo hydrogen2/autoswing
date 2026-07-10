@@ -8,3 +8,6 @@
 30 17 * * 1-5 supper-user /home/supper-user/autoswing/scripts/brain_run.sh midday
 30 19 * * 1-5 supper-user /home/supper-user/autoswing/scripts/brain_run.sh preclose
 30 20 * * 1-5 supper-user /home/supper-user/autoswing/scripts/brain_run.sh preclose
+# ramp-up healthcheck: hourly at :45, deterministic, no LLM. Avoids the
+# gateway's nightly restart window; shares the brain lock.
+45 10-22 * * 1-5 supper-user /home/supper-user/autoswing/scripts/healthcheck.sh
