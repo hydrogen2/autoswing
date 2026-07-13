@@ -207,6 +207,25 @@ class Broker:
         self.journal.record("broker.flatten_all", result=result)
         return result
 
+    def recent_fills(self) -> list[dict]:
+        """Today's executions from IBKR (they only retain the current day).
+        Lets the brain narrate realized outcomes — a silent stop-out must
+        still make it into the digest."""
+        fills = self.ib.reqExecutions()
+        result = [
+            {
+                "symbol": f.contract.symbol,
+                "side": f.execution.side,      # BOT / SLD
+                "shares": f.execution.shares,
+                "price": f.execution.price,
+                "time": str(f.execution.time),
+                "order_id": f.execution.orderId,
+            }
+            for f in fills
+        ]
+        self.journal.record("broker.recent_fills", result=result)
+        return result
+
     def close_position(self, symbol: str) -> dict:
         """Cancel the symbol's working orders, then close any position at
         market. Used by deterministic exits (time-box, pre-earnings)."""

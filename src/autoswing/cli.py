@@ -95,6 +95,10 @@ def main() -> None:
         help="Record today's virtual equity vs the benchmark (VOO) close",
     )
 
+    sub.add_parser(
+        "recent-fills", help="Today's executions (entries, stops, targets)"
+    )
+
     jn = sub.add_parser(
         "journal-note", help="Append a free-form note (e.g. the brain's digest)"
     )
@@ -161,6 +165,8 @@ def _dispatch(broker: Broker, args):
         return {"reset": True, "state_before": before}
     if args.command == "manage-positions":
         return _manage_positions(broker, enforce=args.enforce)
+    if args.command == "recent-fills":
+        return broker.recent_fills()
     if args.command == "benchmark-mark":
         return _benchmark_mark(broker)
     raise ValueError(f"unknown command {args.command!r}")

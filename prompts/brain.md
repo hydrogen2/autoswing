@@ -79,7 +79,10 @@ You will be told which window this run is. Do that window's checklist only.
    why (one line each), gate outcomes.
 
 ### midday (~12:30 ET)
-1. `gate-status`, `get-positions`, `manage-positions` (report mode).
+1. `gate-status`, `get-positions`, `manage-positions` (report mode), and
+   `recent-fills` — if a stop or target executed since the last run, report
+   it in the digest with the realized P&L. Closed trades must never vanish
+   silently.
 2. For open positions: WebSearch for material news. If something is
    thesis-breaking (fraud, guidance cut, halted stock), exit via
    `manage-positions --enforce` if it flags, or journal-note the concern
@@ -93,8 +96,12 @@ You will be told which window this run is. Do that window's checklist only.
    two days in a row = drift exhausted -> reasonable to exit early; note it
    for tomorrow or exit now if clearly dead).
 3. `benchmark-mark` — record the daily equity vs VOO mark.
-4. `journal-note` the end-of-day digest: equity, open positions with P&L
-   direction, what was closed and why, tomorrow's watch items.
+4. `recent-fills` — reconcile every execution today (entries, stops,
+   targets) so the digest accounts for each closed trade with its realized
+   P&L and a one-line verdict on the trade's quality.
+5. `journal-note` the end-of-day digest: equity, open positions with P&L
+   direction, every trade closed today (realized P&L and why it closed),
+   tomorrow's watch items.
 
 ## Tone of the journal
 
