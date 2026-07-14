@@ -185,21 +185,36 @@ def _meta_path():
     return PROJECT_ROOT / "state" / "positions.json"
 
 
-def _manage_positions(broker: Broker, enforce: bool):
+def _manage_positions(broker: Broker, enforce: bool, meta_path=None):
     from datetime import date
 
     from .data.earnings import next_earnings_date
     from .manage import PositionMeta, evaluate_position, load_meta, save_meta
 
-    meta = load_meta(_meta_path())
+    meta_path = meta_path or _meta_path()
+    meta = load_meta(meta_path)
     snapshot = broker.get_positions()
     held = {p["symbol"]: p for p in snapshot["positions"] if p["quantity"] != 0}
+    working = {o["symbol"] for o in snapshot["open_orders"]}
 
     # Reconcile: drop meta for closed positions; adopt untracked ones today
     # (conservative: their time-box starts now, and they still get the
     # earnings check like everything else).
+    suspect = set()
     for sym in list(meta):
         if sym not in held:
+            if sym in working:
+                # Position missing while its exit orders are still live is
+                # impossible for a real close (a bracket fill cancels the
+                # other leg). The gateway's overnight restart returns blank
+                # position feeds; don't let one erase our stops/time-box.
+                suspect.add(sym)
+                broker.journal.record(
+                    "manage.snapshot_suspect", symbol=sym,
+                    detail="position missing but exit orders still working; "
+                           "keeping metadata, skipping this pass",
+                )
+                continue
             broker.journal.record("manage.position_closed", symbol=sym,
                                   meta=meta[sym].__dict__)
             del meta[sym]
@@ -215,6 +230,14 @@ def _manage_positions(broker: Broker, enforce: bool):
 
     report = []
     for sym, m in meta.items():
+        if sym in suspect:
+            report.append({
+                "symbol": sym, "action": "hold",
+                "detail": "snapshot suspect: position missing but exit "
+                          "orders working; management skipped this pass",
+                "next_earnings": None, "enforced": False,
+            })
+            continue
         ned = next_earnings_date(sym)
         action, detail = evaluate_position(
             sym, m.placed_date, ned, broker.config.strategy
@@ -227,7 +250,7 @@ def _manage_positions(broker: Broker, enforce: bool):
             del meta[sym]
         report.append(entry)
 
-    save_meta(_meta_path(), meta)
+    save_meta(meta_path, meta)
     result = {"positions": report, "adopted_untracked": adopted, "enforce": enforce}
     broker.journal.record("manage.review", result=result)
     return result
