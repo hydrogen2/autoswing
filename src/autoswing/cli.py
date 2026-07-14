@@ -197,6 +197,19 @@ def _manage_positions(broker: Broker, enforce: bool, meta_path=None):
     held = {p["symbol"]: p for p in snapshot["positions"] if p["quantity"] != 0}
     working = {o["symbol"] for o in snapshot["open_orders"]}
 
+    # Long-only strategy: a negative broker quantity is never ours by
+    # intent (e.g. an orphaned stop selling into a book the gateway had
+    # already blanked). Never manage it as a healthy long, never adopt
+    # it, never auto-trade against it — flag it for a human.
+    shorts = {s: p for s, p in held.items() if p["quantity"] < 0}
+    for sym, pos in shorts.items():
+        broker.journal.record(
+            "manage.position_mismatch", symbol=sym,
+            quantity=pos["quantity"], avg_cost=pos.get("avg_cost"),
+            detail="broker reports a SHORT position in a long-only strategy; "
+                   "refusing to manage or adopt it — human must flatten",
+        )
+
     # Reconcile: drop meta for closed positions; adopt untracked ones today
     # (conservative: their time-box starts now, and they still get the
     # earnings check like everything else).
@@ -220,7 +233,7 @@ def _manage_positions(broker: Broker, enforce: bool, meta_path=None):
             del meta[sym]
     adopted = []
     for sym in held:
-        if sym not in meta:
+        if sym not in meta and sym not in shorts:
             meta[sym] = PositionMeta(
                 symbol=sym, placed_date=date.today().isoformat(),
                 entry_limit=held[sym]["avg_cost"], stop_loss=0.0, take_profit=0.0,
@@ -229,7 +242,17 @@ def _manage_positions(broker: Broker, enforce: bool, meta_path=None):
             adopted.append(sym)
 
     report = []
+    for sym, pos in shorts.items():
+        report.append({
+            "symbol": sym, "action": "unexpected_short",
+            "detail": f"URGENT: broker shows {pos['quantity']:g} shares but "
+                      "the strategy is long-only; not managed, not adopted — "
+                      "human must flatten",
+            "next_earnings": None, "enforced": False,
+        })
     for sym, m in meta.items():
+        if sym in shorts:
+            continue
         if sym in suspect:
             report.append({
                 "symbol": sym, "action": "hold",

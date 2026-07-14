@@ -98,6 +98,47 @@ class TestBlankSnapshotGuard:
         assert load_meta(meta_path) == {}
         assert "manage.position_closed" in _events(journal)
 
+    def test_unexpected_short_flagged_not_held(self, journal, meta_path):
+        # 2026-07-14: the blanked book's orphaned stop (order 16) sold 96
+        # PENG into a flat account, leaving a naked short. The old code
+        # matched it to the stale long metadata and reported
+        # "hold, day 2 of 15" — on an unprotected short.
+        broker = StubBroker(
+            journal,
+            positions=[{"symbol": "PENG", "quantity": -96.0, "avg_cost": 70.90}],
+            open_orders=[],
+        )
+        result = _manage_positions(broker, enforce=False, meta_path=meta_path)
+
+        (entry,) = result["positions"]
+        assert entry["action"] == "unexpected_short"
+        assert "manage.position_mismatch" in _events(journal)
+        # Metadata is evidence for the human reconciliation — keep it.
+        assert "PENG" in load_meta(meta_path)
+
+    def test_unexpected_short_never_auto_traded(self, journal, meta_path):
+        broker = StubBroker(
+            journal,
+            positions=[{"symbol": "PENG", "quantity": -96.0, "avg_cost": 70.90}],
+            open_orders=[],
+        )
+        _manage_positions(broker, enforce=True, meta_path=meta_path)
+        assert broker.closed == []
+
+    def test_untracked_short_not_adopted(self, journal, tmp_path):
+        empty_meta = tmp_path / "positions.json"
+        broker = StubBroker(
+            journal,
+            positions=[{"symbol": "PENG", "quantity": -96.0, "avg_cost": 70.90}],
+            open_orders=[],
+        )
+        result = _manage_positions(broker, enforce=False, meta_path=empty_meta)
+
+        assert result["adopted_untracked"] == []
+        assert load_meta(empty_meta) == {}
+        assert "manage.position_mismatch" in _events(journal)
+        assert result["positions"][0]["action"] == "unexpected_short"
+
     def test_held_position_unaffected(self, journal, meta_path, monkeypatch):
         import autoswing.data.earnings as earnings
         monkeypatch.setattr(earnings, "next_earnings_date",
