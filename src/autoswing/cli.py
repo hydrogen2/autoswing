@@ -117,11 +117,19 @@ def main() -> None:
             with Broker(config, journal) as broker:
                 result = _dispatch(broker, args)
     except Exception as e:
-        journal.record("cli.error", command=args.command, error=str(e))
-        print(json.dumps({"ok": False, "error": str(e)}))
+        msg = _error_text(e)
+        journal.record("cli.error", command=args.command, error=msg,
+                       error_type=type(e).__name__)
+        print(json.dumps({"ok": False, "error": msg}))
         sys.exit(1)
 
     print(json.dumps({"ok": True, "result": result}, indent=2, default=str))
+
+
+def _error_text(e: BaseException) -> str:
+    # str() of e.g. TimeoutError() or ConnectionError() is "", which left
+    # cli.error journal entries with no diagnostic at all; fall back to repr.
+    return str(e) or repr(e)
 
 
 def _dispatch(broker: Broker, args):
