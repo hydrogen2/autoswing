@@ -15,3 +15,5 @@ dist/
 .pytest_cache/
 uv.lock
 state/
+.secrets.env
+state/reports/
