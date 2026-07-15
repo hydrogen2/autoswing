@@ -104,6 +104,12 @@ def main() -> None:
     )
     jn.add_argument("note")
 
+    sub.add_parser(
+        "reconcile",
+        help="Orphan-order guard: verify position/order consistency. Mode "
+        "(shadow/enforce) comes from config and is human-only.",
+    )
+
     args = parser.parse_args()
     config = load_config()
     journal = Journal(config.journal_dir)
@@ -175,6 +181,8 @@ def _dispatch(broker: Broker, args):
         return _manage_positions(broker, enforce=args.enforce)
     if args.command == "recent-fills":
         return broker.recent_fills()
+    if args.command == "reconcile":
+        return _reconcile(broker)
     if args.command == "benchmark-mark":
         return _benchmark_mark(broker)
     raise ValueError(f"unknown command {args.command!r}")
@@ -276,6 +284,69 @@ def _manage_positions(broker: Broker, enforce: bool, meta_path=None):
     save_meta(meta_path, meta)
     result = {"positions": report, "adopted_untracked": adopted, "enforce": enforce}
     broker.journal.record("manage.review", result=result)
+    return result
+
+
+def _reconcile(broker: Broker):
+    from datetime import datetime, timezone
+
+    from .config import PROJECT_ROOT
+    from .manage import load_meta
+    from .reconcile import (
+        Observation, OrderObs, evaluate, load_state, save_state,
+    )
+
+    cfg = broker.config.reconcile
+    mode = cfg.get("mode", "shadow")
+    state_path = PROJECT_ROOT / "state" / "reconcile_state.json"
+
+    snapshot = broker.get_positions()
+    account = broker.get_account()
+    cash = float(account["summary"]["TotalCashValue"]["value"])
+    obs = Observation(
+        ts=datetime.now(timezone.utc).isoformat(),
+        positions={p["symbol"]: p["quantity"] for p in snapshot["positions"]},
+        orders=[
+            OrderObs(
+                order_id=o["order_id"], symbol=o["symbol"], action=o["action"],
+                order_type=o["type"], quantity=o["quantity"], status=o["status"],
+            )
+            for o in snapshot["open_orders"]
+        ],
+        fills=broker.recent_fills(),
+        cash=cash,
+    )
+    intent = {
+        sym: {"stop_loss": m.stop_loss, "quantity": None}
+        for sym, m in load_meta(_meta_path()).items()
+    }
+
+    new_state, decisions, notes = evaluate(obs, load_state(state_path), intent, cfg)
+    save_state(state_path, new_state)
+
+    actions = []
+    for d in decisions:
+        if mode != "enforce":
+            actions.append({**d, "executed": False, "mode": mode,
+                            "note": "SHADOW: would have acted"})
+            continue
+        if d["action"] == "cancel_orphans":
+            results = [broker.cancel_order(oid) for oid in d["order_ids"]]
+            actions.append({**d, "executed": True, "results": results})
+        elif d["action"] == "replace_stop":
+            r = broker.place_protective_stop(
+                d["symbol"], int(d["quantity"]), d["stop_price"]
+            )
+            actions.append({**d, "executed": True, "results": [r]})
+
+    result = {
+        "mode": mode,
+        "consistent": not decisions and not notes,
+        "notes": notes,
+        "decisions": actions,
+        "state": {s: v.status for s, v in new_state.items()},
+    }
+    broker.journal.record("reconcile.report", result=result)
     return result
 
 

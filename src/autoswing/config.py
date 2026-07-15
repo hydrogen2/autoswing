@@ -32,6 +32,7 @@ class Config:
     journal_dir: Path
     risk: dict
     strategy: dict
+    reconcile: dict
     path: Path
 
 
@@ -53,7 +54,8 @@ def load_config(path: Path | None = None) -> Config:
     journal_dir = PROJECT_ROOT / raw.get("journal", {}).get("dir", "journal")
     return Config(
         broker=broker, journal_dir=journal_dir, risk=raw.get("risk", {}),
-        strategy=raw.get("strategy", {}), path=path,
+        strategy=raw.get("strategy", {}), reconcile=raw.get("reconcile", {}),
+        path=path,
     )
 
 

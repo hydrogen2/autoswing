@@ -32,6 +32,14 @@ risk:
   # Owner's long-term core holdings; bot flags/caps overlap (gray-zone rule).
   core_holdings: []
 
+reconcile:
+  # Orphan-order guard (see docs/incidents/2026-07-14-reset-orphan-short.md).
+  # "shadow": journal decisions, never act. "enforce": execute them.
+  # Promotion to enforce is HUMAN-ONLY, after a clean multi-week shadow record.
+  mode: shadow
+  min_polls: 2
+  min_suspect_minutes: 90
+
 strategy:
   # Deterministic exits enforced by manage-positions, not the LLM.
   max_hold_days: 15               # trading days; time-box exit

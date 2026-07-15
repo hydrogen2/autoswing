@@ -101,7 +101,7 @@ Scaled to $50k; all values live in one config file, changeable only by the human
 3. **Phase 2 — Data.** Earnings calendar + surprise data + price reaction pipeline producing a clean daily candidate list.
 4. **Phase 3 — Brain, fully auto on paper.** Scheduled runs, structured proposals, no human approval (per owner's choice). Let it run full earnings cycles.
 5. **Phase 4 — Evaluate.** 6–12 months paper vs. VOO, risk-adjusted. Apply kill criteria honestly.
-6. **Phase 5 — Live, tiny.** Same code, port flag flipped, small real capital. Only after Phase 4 passes. **Hard blockers before the flag flips**: paid data feed; corroborated orphan-order cancellation (see docs/incidents/2026-07-14) implemented and tested against lying snapshots; account admin (resets, transfers) only ever on a flat book.
+6. **Phase 5 — Live, tiny.** Same code, port flag flipped, small real capital. Only after Phase 4 passes. **Hard blockers before the flag flips**: paid data feed; the orphan-order reconciler (src/autoswing/reconcile.py, built 2026-07-15 after the docs/incidents/2026-07-14 incident, running hourly in SHADOW mode) promoted to enforce only after ≥4 weeks with zero false-positive decisions; account admin (resets, transfers) only ever on a flat book.
 
 ## 7. Known constraints & honest caveats
 

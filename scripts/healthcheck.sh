@@ -57,6 +57,9 @@ esac
 run_check "scan-candidates"   uv run autoswing scan-candidates --days-back 2
 run_check "next-earnings"     uv run autoswing next-earnings MSFT
 run_check "manage-positions"  uv run autoswing manage-positions
+# Orphan-order guard in shadow mode: hourly soak builds the false-positive
+# record that gates promotion to enforce (go-live blocker).
+run_check "reconcile"         uv run autoswing reconcile
 # Gate end-to-end: a dry-run proposal must evaluate cleanly (approval not
 # required — outside market hours a rejection is the correct answer).
 run_check "propose-dry-run" bash -c 'echo "{\"symbol\":\"XOM\",\"action\":\"BUY\",\"quantity\":10,\"entry_limit\":100.0,\"stop_loss\":97.0,\"take_profit\":112.0,\"rationale\":\"healthcheck\",\"next_earnings_date\":\"none\",\"avg_dollar_volume\":900000000}" | uv run autoswing propose-trade - --dry-run'

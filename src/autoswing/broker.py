@@ -7,7 +7,7 @@ ever exist without an attached stop, even if the caller crashes mid-run.
 
 from dataclasses import dataclass
 
-from ib_async import IB, LimitOrder, MarketOrder, Stock
+from ib_async import IB, LimitOrder, MarketOrder, Stock, StopOrder
 
 from .config import Config
 from .journal import Journal
@@ -205,6 +205,19 @@ class Broker:
         self.ib.sleep(1.5)
         result = {"cancelled_order_ids": cancelled, "closing_orders": closed}
         self.journal.record("broker.flatten_all", result=result)
+        return result
+
+    def place_protective_stop(self, symbol: str, quantity: int, stop_price: float) -> dict:
+        """Re-arm a lone stop for an existing long (reconciler repair path)."""
+        contract = self._qualified_stock(symbol)
+        order = StopOrder("SELL", quantity, stop_price)
+        order.tif = "GTC"
+        trade = self.ib.placeOrder(contract, order)
+        self.ib.sleep(1.5)
+        result = {"symbol": symbol.upper(), "order_id": trade.order.orderId,
+                  "stop_price": stop_price, "quantity": quantity,
+                  "status": trade.orderStatus.status}
+        self.journal.record("broker.place_protective_stop", result=result)
         return result
 
     def recent_fills(self) -> list[dict]:
