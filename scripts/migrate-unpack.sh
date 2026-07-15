@@ -29,7 +29,9 @@ chmod 600 "$REPO/docker/.env" "$REPO/.secrets.env"
 PROJDIR="$HOME/.claude/projects/$(echo "$REPO" | tr '/' '-')"
 mkdir -p "$PROJDIR"
 if [ -d "$TMP/claude-project" ]; then
-  cp -r "$TMP/claude-project/." "$PROJDIR/"
+  # -a preserves timestamps so `claude --continue` still resolves the
+  # genuinely most-recent conversation after the move.
+  cp -a "$TMP/claude-project/." "$PROJDIR/"
   echo "Memory + conversation history restored to $PROJDIR"
 elif [ -d "$TMP/memory" ]; then
   cp -r "$TMP/memory" "$PROJDIR/"   # older pack format
