@@ -22,10 +22,12 @@ done
 PASSARG=()
 [ -n "${AUTOSWING_PACK_PASS:-}" ] && PASSARG=(-pass env:AUTOSWING_PACK_PASS)
 
-echo "Packing secrets + state + journal + claude memory..."
+echo "Packing secrets + state + journal + claude memory & conversation history..."
 tar czf - \
   -C "$REPO" docker/.env .secrets.env state journal \
-  -C "$MEMDIR" memory \
+  -C "$(dirname "$MEMDIR")" \
+  --transform 's|^\./-home-supper-user-autoswing|claude-project|' \
+  "./$(basename "$MEMDIR")" \
   | openssl enc -aes-256-cbc -pbkdf2 -salt "${PASSARG[@]}" -out "$OUT"
 
 chmod 600 "$OUT"

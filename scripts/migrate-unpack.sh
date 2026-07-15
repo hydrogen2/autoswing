@@ -24,11 +24,17 @@ cp -r "$TMP/state" "$REPO/"
 cp -r "$TMP/journal" "$REPO/"
 chmod 600 "$REPO/docker/.env" "$REPO/.secrets.env"
 
-# Claude Code memory: project dir name is the repo path with / -> -
+# Claude Code project dir (memory + conversation transcripts): name is the
+# repo path with / -> -. Same-path installs make old sessions resumable.
 PROJDIR="$HOME/.claude/projects/$(echo "$REPO" | tr '/' '-')"
 mkdir -p "$PROJDIR"
-cp -r "$TMP/memory" "$PROJDIR/"
-echo "Memory restored to $PROJDIR/memory"
+if [ -d "$TMP/claude-project" ]; then
+  cp -r "$TMP/claude-project/." "$PROJDIR/"
+  echo "Memory + conversation history restored to $PROJDIR"
+elif [ -d "$TMP/memory" ]; then
+  cp -r "$TMP/memory" "$PROJDIR/"   # older pack format
+  echo "Memory restored to $PROJDIR/memory"
+fi
 
-echo "Restored: docker/.env .secrets.env state/ journal/ + claude memory"
+echo "Restored: docker/.env .secrets.env state/ journal/ + claude project"
 echo "Next: follow MIGRATION.md from step 5 (uv sync, tests, gateway, cron)."
