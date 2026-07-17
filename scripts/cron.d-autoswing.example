@@ -13,3 +13,5 @@
 45 10-22 * * 1-5 supper-user /home/supper-user/autoswing/scripts/healthcheck.sh
 # daily manager/dev review + owner email, after preclose in both DST regimes
 15 21 * * 1-5 supper-user /home/supper-user/autoswing/scripts/manager_run.sh
+# nightly offsite backup (quiet hours, after gateway nightly restart)
+10 5 * * * supper-user /home/supper-user/autoswing/scripts/backup.sh
