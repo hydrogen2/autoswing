@@ -198,6 +198,14 @@ def evaluate(
         # --- consistent ------------------------------------------------------
         if st.status != "consistent":
             notes.append(f"{sym}: back to consistent (was {st.status})")
+        # Drop fully-flat symbols (no position, no working orders) instead of
+        # persisting them forever. They only reach here because they lingered
+        # in `prev`; keeping them means every symbol ever traded accumulates in
+        # reconcile_state and is re-listed "consistent" in every report (e.g.
+        # PENG stuck around for days after the 2026-07-14 short was covered).
+        # A genuine anomaly re-derives from the live snapshot, never from prev.
+        if qty == 0 and not sells:
+            continue
         state[sym] = SymbolState(status="consistent")
 
     return state, decisions, notes

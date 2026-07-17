@@ -58,6 +58,19 @@ class TestConsistentStates:
         assert decisions == []
         assert any("unexpected short" in n for n in notes)
 
+    def test_flat_consistent_symbol_is_dropped_not_persisted(self):
+        # Regression: after a position closes (no shares, no working orders) a
+        # symbol lingered in reconcile_state forever, re-listed "consistent" in
+        # every hourly report. PENG did this for days after its 2026-07-14
+        # short was covered. A flat+clean symbol carried in prev must be
+        # dropped from the returned state, not re-persisted.
+        prev = {"PENG": SymbolState(status="consistent")}
+        state, decisions, notes = evaluate(
+            obs(), prev, INTENT, CFG, now=T0,
+        )
+        assert decisions == []
+        assert "PENG" not in state
+
 
 class TestLyingSnapshots:
     """The reason corroboration exists: one bad observation must never act."""
