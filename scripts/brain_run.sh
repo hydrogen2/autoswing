@@ -42,7 +42,8 @@ fi
 cd "$REPO"
 {
   echo "=== $(date -Is) brain window: $WINDOW ==="
-  claude -p "$(cat prompts/brain.md)
+  # Wall-clock cap: a hung run must never hold the lock into later windows.
+  timeout --kill-after=60 2400 claude -p "$(cat prompts/brain.md)
 
 TODAY'S RUN WINDOW: $WINDOW" \
     --settings config/brain-settings.json \

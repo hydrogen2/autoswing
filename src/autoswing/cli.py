@@ -113,6 +113,7 @@ def main() -> None:
     args = parser.parse_args()
     config = load_config()
     journal = Journal(config.journal_dir)
+    _arm_watchdog(journal, args.command)
 
     try:
         if args.command == "journal-note":
@@ -130,6 +131,28 @@ def main() -> None:
         sys.exit(1)
 
     print(json.dumps({"ok": True, "result": result}, indent=2, default=str))
+
+
+def _arm_watchdog(journal: Journal, command: str) -> None:
+    """Hard wall-clock limit on every CLI invocation. ib_async waits on some
+    broker responses without a timeout; a half-alive gateway once hung
+    gate-status for 15h holding the run lock and blackout the whole day
+    (2026-07-16). No command has a legitimate reason to exceed this."""
+    import os
+    import signal
+
+    limit = int(os.environ.get("AUTOSWING_CMD_TIMEOUT", "180"))
+
+    def _die(signum, frame):
+        try:
+            journal.record("cli.watchdog_timeout", command=command, limit_s=limit)
+        finally:
+            print(json.dumps({"ok": False,
+                              "error": f"watchdog: {command} exceeded {limit}s"}))
+            os._exit(2)
+
+    signal.signal(signal.SIGALRM, _die)
+    signal.alarm(limit)
 
 
 def _error_text(e: BaseException) -> str:

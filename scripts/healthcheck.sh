@@ -24,7 +24,9 @@ FAILS=()
 run_check() { # name, command...
   local name="$1"; shift
   local out
-  if out=$("$@" 2>&1) && echo "$out" | grep -q '"ok": true'; then
+  # Outer wall-clock cap; the CLI's own SIGALRM watchdog (180s) fires first
+  # with a clean JSON error — this is the belt over that suspender.
+  if out=$(timeout --kill-after=30 300 "$@" 2>&1) && echo "$out" | grep -q '"ok": true'; then
     echo "$(date -Is) OK   $name" >>"$LOG"
   else
     echo "$(date -Is) FAIL $name" >>"$LOG"
