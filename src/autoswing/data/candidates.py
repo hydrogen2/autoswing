@@ -37,7 +37,11 @@ def build_candidate(report: Report, reaction: Reaction | None, floors: dict) -> 
         )
     if reaction.last_close < floors["min_price"]:
         c["rejects"].append(f"price ${reaction.last_close} < ${floors['min_price']}")
-    if abs(reaction.move_pct) < floors["min_reaction_move_pct"]:
+    if reaction.move_pct <= 0:
+        c["rejects"].append(
+            f"negative reaction {reaction.move_pct}% (long-only strategy)"
+        )
+    elif abs(reaction.move_pct) < floors["min_reaction_move_pct"]:
         c["rejects"].append(
             f"reaction {reaction.move_pct}% too small (<{floors['min_reaction_move_pct']}%)"
         )

@@ -169,3 +169,9 @@ class TestCandidateFloors:
     def test_small_move_rejected(self):
         c = build_candidate(make_report(), make_reaction(move_pct=1.2), FLOORS)
         assert any("too small" in r for r in c["rejects"])
+
+    def test_negative_reaction_rejected_long_only(self):
+        # Sold-off beats and misses (ALV/RYAAY/BFC pattern) are not long
+        # candidates; the scan now rejects them instead of the brain.
+        c = build_candidate(make_report(), make_reaction(move_pct=-8.6), FLOORS)
+        assert any("long-only" in r for r in c["rejects"])
