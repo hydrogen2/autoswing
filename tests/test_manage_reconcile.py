@@ -139,6 +139,34 @@ class TestBlankSnapshotGuard:
         assert "manage.position_mismatch" in _events(journal)
         assert result["positions"][0]["action"] == "unexpected_short"
 
+    def test_enforce_multiple_exits_no_iteration_crash(
+        self, journal, tmp_path, monkeypatch
+    ):
+        # 2026-07-21: `del meta[sym]` inside `for sym, m in meta.items()`
+        # raised "dictionary changed size during iteration". A single exit
+        # slipped through (crash after the delete); a multi-exit day would
+        # abort after the first close, leaving later positions un-enforced
+        # or their brackets canceled with no replacement (orphan-stop risk).
+        import autoswing.data.earnings as earnings
+        monkeypatch.setattr(earnings, "next_earnings_date", lambda sym: "unknown")
+        path = tmp_path / "positions.json"
+        save_meta(path, {
+            "AAA": PositionMeta("AAA", "2026-07-10", 10.0, 9.0, 12.0, "t"),
+            "BBB": PositionMeta("BBB", "2026-07-10", 20.0, 18.0, 24.0, "t"),
+        })
+        broker = StubBroker(
+            journal,
+            positions=[
+                {"symbol": "AAA", "quantity": 10.0, "avg_cost": 10.0},
+                {"symbol": "BBB", "quantity": 5.0, "avg_cost": 20.0},
+            ],
+            open_orders=[],
+        )
+        result = _manage_positions(broker, enforce=True, meta_path=path)
+        assert sorted(broker.closed) == ["AAA", "BBB"]
+        assert load_meta(path) == {}
+        assert all(e["enforced"] for e in result["positions"])
+
     def test_held_position_unaffected(self, journal, meta_path, monkeypatch):
         import autoswing.data.earnings as earnings
         monkeypatch.setattr(earnings, "next_earnings_date",

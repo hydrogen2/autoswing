@@ -51,6 +51,23 @@ class TestEvaluatePosition:
         )
         assert action == "exit_earnings"
 
+    def test_same_day_reaction_entry_holds(self):
+        # 2026-07-21 MMM regression: entered on the post-print reaction, so
+        # placed_date == next_earnings == today. The print is behind us; a
+        # stale feed pinning next_earnings to today must NOT force an exit.
+        action, detail = evaluate_position(
+            "MMM", "2026-07-09", "2026-07-09", STRAT, today=TODAY
+        )
+        assert action == "hold", detail
+
+    def test_past_earnings_date_holds(self):
+        # Stale feed still shows a now-past print date; it is behind us, so
+        # no upcoming gap exposure — hold, don't exit.
+        action, detail = evaluate_position(
+            "MMM", "2026-07-06", "2026-07-07", STRAT, today=TODAY
+        )
+        assert action == "hold", detail
+
     def test_unknown_earnings_forces_exit(self):
         action, detail = evaluate_position(
             "XOM", "2026-07-06", "unknown", STRAT, today=TODAY

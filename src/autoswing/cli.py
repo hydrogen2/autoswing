@@ -281,7 +281,11 @@ def _manage_positions(broker: Broker, enforce: bool, meta_path=None):
                       "human must flatten",
             "next_earnings": None, "enforced": False,
         })
-    for sym, m in meta.items():
+    # Iterate a snapshot: enforce deletes from meta below, and mutating the
+    # dict mid-iteration raises "dictionary changed size during iteration"
+    # — which on 2026-07-21 aborted the enforce loop after MMM had already
+    # been closed, risking later positions left un-enforced or orphaned.
+    for sym, m in list(meta.items()):
         if sym in shorts:
             continue
         if sym in suspect:
