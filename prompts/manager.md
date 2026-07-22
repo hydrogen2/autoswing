@@ -56,3 +56,5 @@ permissions.
   say "none".
 - Keep it under ~40 lines. Bad news first, plainly. Never inflate: if the
   bot underperforms, the email says so.
+- Do not flag claude.ai connectors (Gmail/Calendar/Drive MCP) as needing
+  authorization — they are unused by design; email goes via send_report.py.
