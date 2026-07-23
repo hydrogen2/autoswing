@@ -39,8 +39,12 @@ run_check() { # name, command...
       echo "$(date -Is) OK   $name" >>"$LOG"
     fi
   else
-    echo "$(date -Is) FAIL $name" >>"$LOG"
-    echo "$out" | tail -15 >>"$LOG"
+    echo "$(date -Is) FAIL $name (exit $code)" >>"$LOG"
+    # Head AND tail: the head shows whether the ok-wrapper ever printed,
+    # which is the difference between "component broke" and "output mangled".
+    echo "$out" | head -6 >>"$LOG"
+    echo "  [...]" >>"$LOG"
+    echo "$out" | tail -12 >>"$LOG"
     FAILS+=("$name")
   fi
 }
