@@ -32,7 +32,12 @@ run_check() { # name, command...
   # (market-hours load noise — 6 false FAILs on 2026-07-22). A valid result
   # with a dirty exit is a visible WARN, never a FAIL; timeouts (no output)
   # and real errors (ok:false) still FAIL.
-  if echo "$out" | grep -q '"ok": true'; then
+  # Substring test in pure bash — NOT `echo | grep -q`: under pipefail,
+  # grep -q's early exit SIGPIPEs echo once output exceeds the 64KB pipe
+  # buffer, turning a successful match into a "failure". That was the real
+  # cause of the intermittent scan-candidates false FAILs (big earnings-
+  # season scans crossed 64KB; quiet-hours reruns didn't).
+  if [[ "$out" == *'"ok": true'* ]]; then
     if [ "$code" -ne 0 ]; then
       echo "$(date -Is) WARN $name: ok result but exit $code" >>"$LOG"
     else
