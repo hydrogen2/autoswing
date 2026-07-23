@@ -23,11 +23,21 @@ FAILS=()
 
 run_check() { # name, command...
   local name="$1"; shift
-  local out
+  local out code
   # Outer wall-clock cap; the CLI's own SIGALRM watchdog (180s) fires first
   # with a clean JSON error — this is the belt over that suspender.
-  if out=$(timeout --kill-after=30 300 "$@" 2>&1) && echo "$out" | grep -q '"ok": true'; then
-    echo "$(date -Is) OK   $name" >>"$LOG"
+  out=$(timeout --kill-after=30 300 "$@" 2>&1); code=$?
+  # Success keys on the RESULT, not the exit code: yfinance's threaded
+  # fetches can exit nonzero after printing a complete ok:true result
+  # (market-hours load noise — 6 false FAILs on 2026-07-22). A valid result
+  # with a dirty exit is a visible WARN, never a FAIL; timeouts (no output)
+  # and real errors (ok:false) still FAIL.
+  if echo "$out" | grep -q '"ok": true'; then
+    if [ "$code" -ne 0 ]; then
+      echo "$(date -Is) WARN $name: ok result but exit $code" >>"$LOG"
+    else
+      echo "$(date -Is) OK   $name" >>"$LOG"
+    fi
   else
     echo "$(date -Is) FAIL $name" >>"$LOG"
     echo "$out" | tail -15 >>"$LOG"
