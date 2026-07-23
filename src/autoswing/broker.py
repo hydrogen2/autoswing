@@ -288,13 +288,18 @@ class Broker:
             for p in self.ib.positions()
             if p.contract.secType == "STK" and p.position != 0
         ]
+        held = {p.symbol: p.quantity for p in positions}
         open_orders = [
             OpenOrderInfo(
                 symbol=t.contract.symbol,
-                # Bracket children carry parentId; bare parentId==0 orders
-                # are entries.
-                is_entry=t.order.parentId == 0,
-                notional=t.order.totalQuantity * (t.order.lmtPrice or 0),
+                is_entry=_is_entry_order(
+                    t.order.action, t.order.parentId,
+                    held.get(t.contract.symbol, 0.0),
+                ),
+                # Stop-style orders carry their price in auxPrice, not
+                # lmtPrice; falling back keeps them from valuing at $0.
+                notional=t.order.totalQuantity
+                * (t.order.lmtPrice or t.order.auxPrice or 0),
             )
             for t in self.ib.openTrades()
         ]
@@ -331,6 +336,26 @@ def _validate_bracket(p: BracketProposal) -> None:
                 "SELL bracket requires take_profit < entry_limit < stop_loss, got "
                 f"target={p.take_profit} entry={p.entry_limit} stop={p.stop_loss}"
             )
+
+
+def _is_entry_order(action: str, parent_id: int, held_quantity: float) -> bool:
+    """True if a working order would add exposure rather than close it.
+
+    parentId alone is not enough. IB reports bracket children with
+    parentId==0 once the parent entry has filled and we reconnect in a
+    later session, so every live stop/target looked like a fresh entry
+    and got counted a second time against the gross-exposure cap. An
+    order that offsets a position we already hold is an exit, whatever
+    its parentId says.
+    """
+    side = action.upper()
+    if parent_id:
+        return False
+    if held_quantity > 0 and side == "SELL":
+        return False
+    if held_quantity < 0 and side == "BUY":
+        return False
+    return True
 
 
 def _num(value):

@@ -5,7 +5,7 @@ import json
 
 import pytest
 
-from autoswing.broker import BracketProposal, _validate_bracket
+from autoswing.broker import BracketProposal, _is_entry_order, _validate_bracket
 from autoswing.config import (
     LIVE_PORT,
     PAPER_PORT,
@@ -101,6 +101,48 @@ class TestBracketValidation:
     def test_negative_price_rejected(self):
         with pytest.raises(ValueError):
             _validate_bracket(_bracket(stop_loss=-1.0))
+
+
+class TestEntryOrderClassification:
+    """Regression: 2026-07-23 — every entry was blocked all day because the
+    four live take-profit legs were counted as new exposure, putting gross at
+    $55,591 against a $47,974 cap while the positions themselves cost $26,041.
+    IB had reported those bracket children with parentId==0 after reconnect.
+    """
+
+    def test_reconnected_bracket_child_is_not_an_entry(self):
+        # parentId lost on reconnect, but it offsets a long we hold.
+        assert not _is_entry_order("SELL", 0, held_quantity=41.0)
+
+    def test_bracket_child_with_parent_is_not_an_entry(self):
+        assert not _is_entry_order("SELL", 47, held_quantity=41.0)
+
+    def test_fresh_buy_with_no_position_is_an_entry(self):
+        assert _is_entry_order("BUY", 0, held_quantity=0.0)
+
+    def test_buy_adding_to_existing_long_is_an_entry(self):
+        assert _is_entry_order("BUY", 0, held_quantity=41.0)
+
+    def test_short_entry_is_an_entry(self):
+        assert _is_entry_order("SELL", 0, held_quantity=0.0)
+
+    def test_buy_to_cover_a_short_is_not_an_entry(self):
+        assert not _is_entry_order("BUY", 0, held_quantity=-41.0)
+
+    def test_gross_exposure_counts_positions_once(self):
+        """The exact 2026-07-23 book: exposure must be cost, not cost+targets."""
+        positions = {"JBHT": 22.0, "TRV": 16.0, "MMM": 41.0, "ABT": 64.0}
+        # (symbol, action, parentId, quantity, lmtPrice) as IB replayed them.
+        working = [
+            ("MMM", "SELL", 0, 41.0, 188.5), ("ABT", "SELL", 0, 64.0, 117.0),
+            ("JBHT", "SELL", 0, 22.0, 341.0), ("TRV", "SELL", 0, 16.0, 427.0),
+        ]
+        counted = sum(
+            qty * px
+            for sym, action, parent, qty, px in working
+            if _is_entry_order(action, parent, positions.get(sym, 0.0))
+        )
+        assert counted == 0.0
 
 
 class TestJournal:
