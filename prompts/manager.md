@@ -37,6 +37,12 @@ permissions.
    don't fix judgment in code, report it.
 4. **Scoreboard**: read `state/benchmark.jsonl`; compute bot vs VOO since
    inception and note drawdown. Read gate-status.
+4b. **Gate-rejection audit**: count today's gate.decision rejections BY RULE
+   and compare against the last few days. A rising share of portfolio-level
+   rejections (max_gross_exposure, max_open_positions, kill_switch,
+   daily_loss_halt) is a degrading-blockade signature — the 2026-07-23
+   outage grew 5/14 → 9/16 → 16/16 over three days in plain sight of the
+   journal. Two consecutive rising days = investigate that day, not later.
 5. **Bugs**: for each defect inside your fence: fix, test, commit, push.
    For each outside: escalate with a proposed patch in the email body.
 6. **Report**: write the email body to `state/reports/<today>.md`, then

@@ -27,6 +27,7 @@ run_check() { # name, command...
   # Outer wall-clock cap; the CLI's own SIGALRM watchdog (180s) fires first
   # with a clean JSON error — this is the belt over that suspender.
   out=$(timeout --kill-after=30 300 "$@" 2>&1); code=$?
+  LAST_OUT="$out"
   # Success keys on the RESULT, not the exit code: yfinance's threaded
   # fetches can exit nonzero after printing a complete ok:true result
   # (market-hours load noise — 6 false FAILs on 2026-07-22). A valid result
@@ -84,6 +85,30 @@ run_check "reconcile"         uv run autoswing reconcile
 # Gate end-to-end: a dry-run proposal must evaluate cleanly (approval not
 # required — outside market hours a rejection is the correct answer).
 run_check "propose-dry-run" bash -c 'echo "{\"symbol\":\"XOM\",\"action\":\"BUY\",\"quantity\":10,\"entry_limit\":100.0,\"stop_loss\":97.0,\"take_profit\":112.0,\"rationale\":\"healthcheck\",\"next_earnings_date\":\"none\",\"avg_dollar_volume\":900000000}" | uv run autoswing propose-trade - --dry-run'
+
+# Portfolio-halt canary (2026-07-23: exposure double-count silently blocked
+# ALL entries for 3 days while this check logged OK). A dry-run refused by a
+# PORTFOLIO-level rule means no candidate whatsoever can pass — that is a
+# trading outage, not a normal rejection. Checked during regular hours only
+# (ET-computed, DST-safe); off-hours rejections are correct behaviour.
+# JSON is parsed, not substring-matched: rules serialize multi-line.
+ET_MIN=$((10#$(TZ=America/New_York date +%H) * 60 + 10#$(TZ=America/New_York date +%M)))
+if [ "$ET_MIN" -ge 570 ] && [ "$ET_MIN" -lt 960 ]; then
+  BLOCKED=$(printf '%s' "$LAST_OUT" | sed -n '/^{/,$p' | python3 -c "
+import json, sys
+try:
+    d = json.load(sys.stdin)
+    rules = d['result']['decision']['rules']
+    bad = [r['rule'] for r in rules if not r['passed'] and r['rule'] in
+           ('kill_switch', 'daily_loss_halt', 'max_gross_exposure', 'max_open_positions')]
+    print(' '.join(bad))
+except Exception:
+    pass")
+  if [ -n "$BLOCKED" ]; then
+    echo "$(date -Is) WARN propose-dry-run: canary blocked by $BLOCKED — NO entry can pass (portfolio-level halt)" >>"$LOG"
+    uv run autoswing journal-note "HEALTHCHECK portfolio-halt canary: dry-run blocked by $BLOCKED during RTH — no entry can pass. If unexpected, this is a silent trading outage (cf. 2026-07-23)." >>"$LOG" 2>&1 || true
+  fi
+fi
 
 if [ ${#FAILS[@]} -gt 0 ]; then
   uv run autoswing journal-note "HEALTHCHECK FAILURE: ${FAILS[*]} — see $LOG. Brain: if a trading window hits this broken component, stand down and note it." >>"$LOG" 2>&1
