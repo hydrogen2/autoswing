@@ -117,7 +117,7 @@ def main() -> None:
 
     try:
         if args.command == "journal-note":
-            result = journal.record("brain.note", note=args.note)
+            result = journal.record("brain.note", note=_resolve_note(args.note))
         elif args.command in ("scan-candidates", "next-earnings"):
             result = _dispatch_data(config, journal, args)
         else:
@@ -153,6 +153,17 @@ def _arm_watchdog(journal: Journal, command: str) -> None:
 
     signal.signal(signal.SIGALRM, _die)
     signal.alarm(limit)
+
+
+def _resolve_note(note: str, stdin=None) -> str:
+    # Honor the `-`=stdin convention that propose-trade already uses. The
+    # brain pipes digests as `... | journal-note -`; recording the literal
+    # "-" silently drops the digest. On 2026-07-28 three digests were lost
+    # this way (recovered only because the brain noticed and re-posted).
+    if note == "-":
+        stream = sys.stdin if stdin is None else stdin
+        return stream.read().strip()
+    return note
 
 
 def _error_text(e: BaseException) -> str:
