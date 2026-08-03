@@ -388,6 +388,24 @@ def _reconcile(broker: Broker):
     return result
 
 
+def _merge_benchmark_entry(existing, entry):
+    """Merge a new daily benchmark mark into the series, deduping by date.
+
+    The series is one row per calendar day. If benchmark-mark runs more than
+    once in a day, the later mark must REPLACE the earlier row rather than
+    append a duplicate — on 2026-08-03 an errant premarket benchmark-mark
+    wrote a stale early row that the authoritative preclose mark then
+    duplicated, leaving two 08-03 rows that double-count in any per-day
+    aggregation. Last-write-wins per date, chronological order preserved.
+    Also self-heals a series that already contains same-date duplicates.
+    """
+    by_date = {}
+    for row in existing:
+        by_date[row["date"]] = row
+    by_date[entry["date"]] = entry
+    return list(by_date.values())
+
+
 def _benchmark_mark(broker: Broker):
     import json as _json
     from datetime import date
@@ -404,11 +422,12 @@ def _benchmark_mark(broker: Broker):
 
     path = PROJECT_ROOT / "state" / "benchmark.jsonl"
     path.parent.mkdir(parents=True, exist_ok=True)
-    first = None
+    existing = []
     if path.exists():
-        lines = path.read_text().strip().splitlines()
-        if lines:
-            first = _json.loads(lines[0])
+        for line in path.read_text().strip().splitlines():
+            if line:
+                existing.append(_json.loads(line))
+    first = existing[0] if existing else None
 
     entry = {
         "date": date.today().isoformat(),
@@ -424,8 +443,10 @@ def _benchmark_mark(broker: Broker):
         entry["benchmark_return_pct"] = round(
             100 * (bench_close / first["benchmark_close"] - 1), 2
         )
-    with open(path, "a") as f:
-        f.write(_json.dumps(entry) + "\n")
+    series = _merge_benchmark_entry(existing, entry)
+    with open(path, "w") as f:
+        for row in series:
+            f.write(_json.dumps(row) + "\n")
     broker.journal.record("benchmark.mark", result=entry)
     return entry
 
