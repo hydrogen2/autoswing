@@ -1,7 +1,7 @@
 """Tests for data-layer logic: calendar parsing, reaction math, floors.
 All synthetic — no network."""
 
-from datetime import date
+from datetime import date, timedelta
 
 import pandas as pd
 import pytest
@@ -109,6 +109,30 @@ class TestReactionMetrics:
         report_day = df.index[25].date()
         r = reaction_metrics("T", df, report_day, "unknown")
         assert r.reaction_date == df.index[26].date().isoformat()
+
+    def test_unknown_timing_waits_for_next_session(self):
+        # Report day IS the last bar and timing is unknown, so the report may
+        # have landed after the close -- that day predates the news and must
+        # not be read as confirmation. (2026-08-04 ADEA false positive.)
+        closes = [100.0] * 25 + [104.28]
+        df = make_df(closes)
+        report_day = df.index[25].date()
+        assert reaction_metrics("T", df, report_day, "unknown") is None
+
+    def test_unknown_timing_non_trading_report_date(self):
+        # Report dated on a weekend day: the next session reacts to it whatever
+        # the timing was, even with no bar strictly after that session yet.
+        closes = [100.0] * 25 + [109.0]
+        df = make_df(closes)
+        dates = [d.date() for d in df.index]
+        # Last bar follows a weekend gap, so truncate to end on that session.
+        gap = max(i for i in range(1, len(dates)) if (dates[i] - dates[i - 1]).days > 1)
+        df = df.iloc[: gap + 1]
+        df.iloc[gap, df.columns.get_loc("Close")] = 109.0
+        non_trading_day = dates[gap - 1] + timedelta(days=1)
+        r = reaction_metrics("T", df, non_trading_day, "unknown")
+        assert r.reaction_date == dates[gap].isoformat()
+        assert r.move_pct == 9.0
 
     def test_drift_since_reaction(self):
         closes = [100.0] * 25 + [110.0, 111.0, 113.3]

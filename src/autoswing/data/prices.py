@@ -62,15 +62,24 @@ def reaction_metrics(
     else:
         # Timing unknown: reaction is whichever of D / D+1 moved more.
         on = [i for i, d in enumerate(dates) if d >= report_date]
-        after = [i for i, d in enumerate(dates) if d > report_date]
         if not on:
             return None
-        if not after or after[0] == on[0]:
-            candidates = on
+        i_on = on[0]
+        if dates[i_on] > report_date:
+            # Report is dated on a non-trading day, so D never traded: the
+            # first session on or after it reacts to the news either way.
+            candidates = [i_on]
         else:
-            i_on, i_after = on[0], after[0]
+            after = [i for i, d in enumerate(dates) if d > report_date]
+            if not after:
+                # D traded but D+1 hasn't yet. With timing unknown the report
+                # may have landed after D's close, which would make D's move a
+                # pre-news run-up rather than confirmation — so we cannot judge
+                # the reaction yet. Wait for the next session.
+                return None
             if i_on == 0:
                 return None
+            i_after = after[0]
             move = lambda i: abs(
                 df["Close"].iloc[i] / df["Close"].iloc[i - 1] - 1
             )
