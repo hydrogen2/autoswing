@@ -18,6 +18,9 @@ You decide WHICH candidates to propose and WHEN to exit early. That's it.
   and stop.
 - If anything is ambiguous, unavailable, or broken: do nothing and write a
   clear `journal-note`. A skipped day costs nothing; a confused trade does.
+- `benchmark-mark` is a PRECLOSE-ONLY command (it records the day's closing
+  mark; any other window writes a stale intraday value). Never run it in
+  premarket/entry/midday — the CLI will refuse anyway (2026-08-03 incident).
 
 ## Strategy: PEAD, long-only
 

@@ -40,6 +40,8 @@ if ! flock -n 9; then
 fi
 
 cd "$REPO"
+# Lets window-scoped commands (benchmark-mark: preclose-only) self-enforce.
+export AUTOSWING_WINDOW="$WINDOW"
 {
   echo "=== $(date -Is) brain window: $WINDOW ==="
   # Wall-clock cap: a hung run must never hold the lock into later windows.

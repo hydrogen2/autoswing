@@ -408,7 +408,17 @@ def _merge_benchmark_entry(existing, entry):
 
 def _benchmark_mark(broker: Broker):
     import json as _json
+    import os
     from datetime import date
+
+    # Preclose-only: an intraday mark is a stale data point (2026-08-03
+    # duplicate-row incident). Unset AUTOSWING_WINDOW (manual/cron-less
+    # invocation) is allowed; a declared non-preclose window is refused.
+    window = os.environ.get("AUTOSWING_WINDOW", "")
+    if window and window != "preclose":
+        raise ValueError(
+            f"benchmark-mark is preclose-only; refused in window {window!r}"
+        )
 
     from .config import PROJECT_ROOT
     from .data.prices import fetch_history
