@@ -199,3 +199,58 @@ class TestCandidateFloors:
         # candidates; the scan now rejects them instead of the brain.
         c = build_candidate(make_report(), make_reaction(move_pct=-8.6), FLOORS)
         assert any("long-only" in r for r in c["rejects"])
+
+    def test_failed_price_fetch_distinguished_from_not_yet_traded(self):
+        # 2026-08-05: a dropped batch download was labelled no_reaction_data_yet,
+        # so "we couldn't fetch it" read as "re-check tomorrow" and candidates
+        # (ATKR, IBTA) silently vanished between identical scans.
+        c = build_candidate(make_report(), None, FLOORS, has_prices=False)
+        assert c["rejects"] == ["price_data_unavailable"]
+
+
+class TestFetchHistoryRetry:
+    """A partial batch miss is retried; a wholesale miss is not."""
+
+    def _patch(self, monkeypatch, responses):
+        calls = []
+
+        def fake_download(symbols, **kwargs):
+            calls.append(list(symbols))
+            return responses.pop(0)
+
+        import yfinance as yf
+        monkeypatch.setattr(yf, "download", fake_download)
+        return calls
+
+    def _frame(self):
+        import pandas as pd
+        idx = pd.to_datetime(["2026-07-07", "2026-07-08"])
+        return pd.DataFrame(
+            {"Open": [100.0, 106.0], "Close": [100.0, 108.0],
+             "Volume": [1e6, 4e6]}, index=idx,
+        )
+
+    def test_partial_miss_is_retried_and_recovered(self, monkeypatch):
+        import pandas as pd
+        from autoswing.data.prices import fetch_history
+
+        df = self._frame()
+        first = pd.concat({"A": df, "B": df, "C": df}, axis=1)   # D dropped
+        second = pd.concat({"D": df}, axis=1)
+        calls = self._patch(monkeypatch, [first, second])
+
+        out = fetch_history(["A", "B", "C", "D"])
+        assert calls == [["A", "B", "C", "D"], ["D"]]
+        assert sorted(out) == ["A", "B", "C", "D"]
+
+    def test_wholesale_miss_is_not_retried(self, monkeypatch):
+        import pandas as pd
+        from autoswing.data.prices import fetch_history
+
+        df = self._frame()
+        first = pd.concat({"A": df}, axis=1)  # 3 of 4 missing -> real outage
+        calls = self._patch(monkeypatch, [first])
+
+        out = fetch_history(["A", "B", "C", "D"])
+        assert calls == [["A", "B", "C", "D"]]  # no second call
+        assert sorted(out) == ["A"]

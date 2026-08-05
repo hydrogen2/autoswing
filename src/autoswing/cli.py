@@ -469,6 +469,8 @@ def _dispatch_data(config, journal: Journal, args):
         journal.record(
             "data.scan_candidates",
             scanned=result["scanned"], passing=result["passing"],
+            price_data_missing=result["price_data_missing"],
+            price_data_missing_symbols=result["price_data_missing_symbols"],
             symbols=[c["symbol"] for c in result["candidates"]],
         )
         return result

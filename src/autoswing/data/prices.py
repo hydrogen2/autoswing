@@ -26,12 +26,9 @@ class Reaction:
     days_since_reaction: int  # trading days
 
 
-def fetch_history(symbols: list[str], period: str = "3mo") -> dict[str, pd.DataFrame]:
-    """Batch-download OHLCV per symbol. Missing/empty symbols are dropped."""
+def _download_batch(symbols: list[str], period: str) -> dict[str, pd.DataFrame]:
     import yfinance as yf
 
-    if not symbols:
-        return {}
     data = yf.download(
         symbols, period=period, group_by="ticker", auto_adjust=True,
         threads=True, progress=False,
@@ -45,6 +42,28 @@ def fetch_history(symbols: list[str], period: str = "3mo") -> dict[str, pd.DataF
         df = df.dropna(subset=["Close"])
         if len(df):
             out[sym] = df
+    return out
+
+
+# A partial miss is the yfinance flake; a wholesale miss is a real outage and
+# retrying it just burns the scan's watchdog budget.
+_RETRY_MAX_MISSING_FRACTION = 0.25
+
+
+def fetch_history(symbols: list[str], period: str = "3mo") -> dict[str, pd.DataFrame]:
+    """Batch-download OHLCV per symbol. Missing/empty symbols are dropped.
+
+    The batch download drops a varying handful of symbols per call, so a
+    partial miss is retried once — otherwise a qualifying candidate vanishes
+    from the scan by luck of the draw (observed 08-05: six identical scans
+    returned 81/54/54/54/34/54 passing).
+    """
+    if not symbols:
+        return {}
+    out = _download_batch(symbols, period)
+    missing = [s for s in symbols if s not in out]
+    if missing and len(missing) <= _RETRY_MAX_MISSING_FRACTION * len(symbols):
+        out.update(_download_batch(missing, period))
     return out
 
 

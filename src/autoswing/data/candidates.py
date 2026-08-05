@@ -14,7 +14,8 @@ from .earnings import Report, recent_reporters
 from .prices import Reaction, fetch_history, reaction_metrics
 
 
-def build_candidate(report: Report, reaction: Reaction | None, floors: dict) -> dict:
+def build_candidate(report: Report, reaction: Reaction | None, floors: dict,
+                    has_prices: bool = True) -> dict:
     c = {
         "symbol": report.symbol,
         "company": report.company,
@@ -29,7 +30,13 @@ def build_candidate(report: Report, reaction: Reaction | None, floors: dict) -> 
         "rejects": [],
     }
     if reaction is None:
-        c["rejects"].append("no_reaction_data_yet")
+        # A failed price download and a report that hasn't traded yet both
+        # yield reaction=None, but they mean opposite things: the first is our
+        # bug to retry, the second is "re-check tomorrow". Labelling both
+        # no_reaction_data_yet let good candidates vanish silently (08-05).
+        c["rejects"].append(
+            "no_reaction_data_yet" if has_prices else "price_data_unavailable"
+        )
         return c
     if reaction.adv_dollar_20d < floors["min_avg_dollar_volume"]:
         c["rejects"].append(
@@ -69,13 +76,18 @@ def scan(risk_config: dict, days_back: int = 3, min_move_pct: float = 3.0,
             reaction_metrics(sym, df, date.fromisoformat(report.report_date), report.timing)
             if df is not None else None
         )
-        candidates.append(build_candidate(report, reaction, floors))
+        candidates.append(build_candidate(report, reaction, floors, has_prices=df is not None))
 
     passing = [c for c in candidates if not c["rejects"]]
     passing.sort(key=lambda c: abs(c["reaction"]["move_pct"]), reverse=True)
+    # Surfaced so a shrinking candidate list is attributable to a data outage
+    # rather than read as "nothing qualified today".
+    no_prices = sorted(s for s in by_symbol if s not in history)
     return {
         "scanned": len(candidates),
         "passing": len(passing),
+        "price_data_missing": len(no_prices),
+        "price_data_missing_symbols": no_prices,
         "candidates": passing,
         "rejected": [
             {"symbol": c["symbol"], "rejects": c["rejects"]}
