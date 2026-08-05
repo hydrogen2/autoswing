@@ -17,7 +17,7 @@ journal:
 risk:
   equity_baseline: 50000
   risk_per_trade_pct: 1.0
-  max_position_pct: 15.0
+  max_position_pct: 10.0
   max_open_positions: 10
   max_gross_exposure_pct: 100.0
   daily_loss_halt_pct: 3.0

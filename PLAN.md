@@ -84,7 +84,7 @@ Positive-skew by construction: many small losses, occasional large winners.
 Scaled to $50k; all values live in one config file, changeable only by the human.
 
 - **Risk per trade**: 1% of equity (~$500) — position size derived from stop distance.
-- **Max position size**: 15% of equity (~$7,500 notional).
+- **Max position size**: 10% of equity (~$5,000 notional; lowered from 15% on 2026-08-05 so the 10-slot limit is actually reachable — gross cap binds at 7 otherwise).
 - **Max open positions**: 10.
 - **Max gross exposure**: 100% of equity (no leverage in v1).
 - **Stop-loss required** on every order — proposals without one are rejected.

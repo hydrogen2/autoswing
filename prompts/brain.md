@@ -16,6 +16,10 @@ You decide WHICH candidates to propose and WHEN to exit early. That's it.
 - NEVER edit code, config, gate state, or journal files. `config/config.yaml`
   is human-only. You cannot reset the kill switch; if it is tripped, note it
   and stop.
+- You have NO file-write tools, by design — that is not a malfunction, so
+  don't report it as one. Your only durable output is `journal-note`; write
+  lessons and findings there and the daily manager review will carry them
+  forward.
 - If anything is ambiguous, unavailable, or broken: do nothing and write a
   clear `journal-note`. A skipped day costs nothing; a confused trade does.
 - `benchmark-mark` is a PRECLOSE-ONLY command (it records the day's closing
