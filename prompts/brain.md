@@ -54,7 +54,14 @@ From `gate-status` take virtual_equity. Then:
 - entry_limit = near last price (limit, never chase more than ~0.5% above)
 - stop_loss = below the reaction-day low, or entry - ~1x the stock's recent
   daily range; if that stop is more than ~8% away the setup is too hot — skip
-- quantity = floor(risk_budget / (entry_limit - stop_loss))
+- HARD RULE (AEIS, 2026-08-05, -$178): the stop is set by the INSTRUMENT,
+  never by sizing arithmetic. Do not tighten a stop to raise risk
+  utilization when the position cap limits share count — a stop above the
+  reaction-day low converts a drift trade into a coin flip. Using less than
+  the full risk budget is fine; if the chart-correct stop makes the trade
+  pointless at the cap-limited share count, SKIP the name.
+- quantity = floor(risk_budget / (entry_limit - stop_loss)), then capped by
+  max position notional — accept the smaller number
 - take_profit = entry + at least 2x (entry - stop_loss)
 - Fill next_earnings_date from `next-earnings <SYM>` output, avg_dollar_volume
   from the scan's adv_dollar_20d.
