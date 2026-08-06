@@ -115,7 +115,13 @@ You will be told which window this run is. Do that window's checklist only.
    VIRTUAL position only — shadow never places real orders. One-line
    thesis per shadow entry in the digest; also note quality names you
    passed on and why.
-5. `journal-note` digest: what you proposed and why, what you skipped and
+5. SKIP LEDGER: for every candidate you seriously considered and rejected
+   (max ~6/day), log it structurally:
+   `echo '{"symbol":"X","category":"low_quality_beat","reason":"..."}' | uv run autoswing log-skip -`
+   Categories: low_quality_beat, sold_off, stop_geometry, liquidity,
+   capacity, already_moved, other. This measures whether your judgment
+   beats the raw scanner — log honestly, including skips you're unsure of.
+6. `journal-note` digest: what you proposed and why, what you skipped and
    why (one line each), gate outcomes, shadow entries taken.
 
 ### midday (~12:30 ET)

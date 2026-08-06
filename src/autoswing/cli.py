@@ -150,6 +150,22 @@ def main() -> None:
 
     sub.add_parser("forecast-stats", help="forecast exp: hit rates + calibration by tier")
 
+    sub.add_parser(
+        "exit-counterfactuals",
+        help="research: replay all live entries under alternative exit rules",
+    )
+
+    ls = sub.add_parser(
+        "log-skip",
+        help="research: record a considered-but-skipped candidate (structured)",
+    )
+    ls.add_argument("skip", help="skip JSON path, or '-' for stdin")
+
+    sub.add_parser(
+        "skip-outcomes",
+        help="research: what skipped candidates did next, by skip category",
+    )
+
     args = parser.parse_args()
     config = load_config()
     journal = Journal(config.journal_dir)
@@ -160,7 +176,8 @@ def main() -> None:
             result = journal.record("brain.note", note=_resolve_note(args.note))
         elif args.command in ("scan-candidates", "next-earnings", "scan-movers",
                               "shadow-mark", "shadow-status", "scan-upcoming",
-                              "forecast-log", "forecast-score", "forecast-stats"):
+                              "forecast-log", "forecast-score", "forecast-stats",
+                              "exit-counterfactuals", "log-skip", "skip-outcomes"):
             result = _dispatch_data(config, journal, args)
         else:
             with Broker(config, journal) as broker:
@@ -522,8 +539,18 @@ def _benchmark_mark(broker: Broker):
     status = gate.status(broker.account_state())
 
     bench_sym = broker.config.strategy.get("benchmark_symbol", "VOO")
-    hist = fetch_history([bench_sym], period="5d")
+    hist = fetch_history([bench_sym, "SPY", "^VIX"], period="3mo")
     bench_close = float(hist[bench_sym]["Close"].iloc[-1]) if bench_sym in hist else None
+
+    # Regime tags: joined to trades post-hoc for conditional-performance
+    # research ("does PEAD pay in storms?"). Passive collection only.
+    regime = {}
+    if "SPY" in hist and len(hist["SPY"]) >= 20:
+        spy = hist["SPY"]["Close"].astype(float)
+        regime["spy_vs_20dma_pct"] = round(
+            100 * (float(spy.iloc[-1]) / float(spy.tail(20).mean()) - 1), 2)
+    if "^VIX" in hist and len(hist["^VIX"]):
+        regime["vix_close"] = round(float(hist["^VIX"]["Close"].iloc[-1]), 2)
 
     path = PROJECT_ROOT / "state" / "benchmark.jsonl"
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -540,6 +567,7 @@ def _benchmark_mark(broker: Broker):
         "benchmark_close": bench_close,
         "drawdown_pct": status["drawdown_pct"],
         "kill_tripped": status["kill_tripped"],
+        **regime,
     }
     if first and first.get("benchmark_close") and bench_close:
         entry["bot_return_pct"] = round(
@@ -606,7 +634,61 @@ def _dispatch_data(config, journal: Journal, args):
         d = PROJECT_ROOT / "state" / "forecast"
         return compute_stats(load_jsonl(d / "forecasts.jsonl"),
                              load_jsonl(d / "scores.jsonl"))
+    if args.command == "exit-counterfactuals":
+        from .config import PROJECT_ROOT
+        from .data.prices import fetch_history
+        from .research import compare_exit_rules, extract_live_trades
+
+        trades = extract_live_trades(PROJECT_ROOT / "journal")
+        history = fetch_history(sorted({t.symbol for t in trades}), period="6mo")
+        comparison = compare_exit_rules(trades, history)
+        journal.record("research.exit_counterfactuals", summary={
+            name: {k: v for k, v in stats.items() if k != "results"}
+            for name, stats in comparison.items()
+        })
+        return comparison
+    if args.command == "log-skip":
+        return _log_skip(args, journal)
+    if args.command == "skip-outcomes":
+        from .config import PROJECT_ROOT
+        from .data.prices import fetch_history
+        from .forecast import load_jsonl
+        from .research import score_skips
+
+        skips = load_jsonl(PROJECT_ROOT / "state" / "research" / "skips.jsonl")
+        if not skips:
+            return {"scored": [], "pending": 0, "by_category": {}}
+        history = fetch_history(sorted({s["symbol"] for s in skips}), period="3mo")
+        result = score_skips(skips, history)
+        journal.record("research.skip_outcomes",
+                       by_category=result["by_category"],
+                       pending=result["pending"])
+        return result
     raise ValueError(f"unknown data command {args.command!r}")
+
+
+def _log_skip(args, journal: Journal):
+    from datetime import date
+
+    from .config import PROJECT_ROOT
+    from .forecast import append_jsonl
+    from .research import validate_skip
+
+    raw = sys.stdin.read() if args.skip == "-" else open(args.skip).read()
+    payload = json.loads(raw)
+    errs = validate_skip(payload)
+    if errs:
+        raise ValueError("invalid skip: " + "; ".join(errs))
+    entry = {
+        "symbol": payload["symbol"].upper(),
+        "date": payload.get("date", date.today().isoformat()),
+        "category": payload["category"],
+        "reason": payload["reason"],
+    }
+    append_jsonl(PROJECT_ROOT / "state" / "research" / "skips.jsonl", entry)
+    journal.record("research.skip_logged", **entry)
+    return {"logged": f"{entry['symbol']}-{entry['date']}",
+            "category": entry["category"]}
 
 
 def _forecast_paths():

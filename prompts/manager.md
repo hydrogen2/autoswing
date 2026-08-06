@@ -56,6 +56,13 @@ permissions.
    journal. Two consecutive rising days = investigate that day, not later.
 5. **Bugs**: for each defect inside your fence: fix, test, commit, push.
    For each outside: escalate with a proposed patch in the email body.
+5b. **Friday research review** (Fridays only): run `uv run autoswing
+   exit-counterfactuals`, `skip-outcomes`, `forecast-stats` and read
+   docs/research-backlog.md. Add a RESEARCH section to the email: what the
+   three instruments currently say (exit rules comparison, skip categories'
+   forward returns vs our taken trades, forecast hit rates), plus propose
+   exactly ONE experiment — new or from the backlog — with its cost, risk,
+   and what decision it would inform. The owner green-lights or bins it.
 6. **Report**: write the email body to `state/reports/<today>.md`, then
    send: `uv run python scripts/send_report.py --subject "autoswing daily:
    <date> — <one-line verdict>" --body-file state/reports/<today>.md`.
