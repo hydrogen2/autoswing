@@ -390,13 +390,12 @@ def _shadow_propose(broker: Broker, args):
     """Full gate evaluation, virtual position on approval. NEVER places."""
     from datetime import date
 
-    from .risk_gate import TradeProposal
     from .shadow import ShadowPosition, load_book, save_book
 
     raw = sys.stdin.read() if args.proposal == "-" else open(args.proposal).read()
     payload = json.loads(raw)
     payload.setdefault("strategy", "news-v2")
-    proposal = TradeProposal(**payload)
+    proposal = _build_proposal(payload)
 
     gate = _make_gate(broker)
     decision = gate.evaluate(proposal, broker.account_state())
@@ -864,11 +863,34 @@ def _make_gate(broker: Broker):
     )
 
 
-def _propose_trade(broker: Broker, args):
+def _build_proposal(payload: dict):
+    """Build a TradeProposal, naming bad fields instead of raising a bare
+    TypeError. On 2026-08-06 the brain omitted "action" and got
+    "TradeProposal.__init__() missing 1 required positional argument" —
+    a Python internals message it had to guess its way past mid-window."""
+    from dataclasses import MISSING, fields
+
     from .risk_gate import TradeProposal
 
+    spec = fields(TradeProposal)
+    known = {f.name for f in spec}
+    required = {f.name for f in spec
+                if f.default is MISSING and f.default_factory is MISSING}
+    problems = []
+    missing = sorted(required - payload.keys())
+    if missing:
+        problems.append("missing required field(s): " + ", ".join(missing))
+    unknown = sorted(payload.keys() - known)
+    if unknown:
+        problems.append("unknown field(s): " + ", ".join(unknown))
+    if problems:
+        raise ValueError("invalid proposal: " + "; ".join(problems))
+    return TradeProposal(**payload)
+
+
+def _propose_trade(broker: Broker, args):
     raw = sys.stdin.read() if args.proposal == "-" else open(args.proposal).read()
-    proposal = TradeProposal(**json.loads(raw))
+    proposal = _build_proposal(json.loads(raw))
 
     gate = _make_gate(broker)
     decision = gate.evaluate(proposal, broker.account_state())
