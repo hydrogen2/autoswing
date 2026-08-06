@@ -89,8 +89,19 @@ You will be told which window this run is. Do that window's checklist only.
    `next-earnings <SYM>`, then build the proposal JSON per the sizing
    rules and submit: `echo '<json>' | uv run autoswing propose-trade -`.
    Include a rationale field with the thesis in one or two sentences.
-4. `journal-note` digest: what you proposed and why, what you skipped and
-   why (one line each), gate outcomes.
+4. V2 SHADOW (after PEAD work; skip entirely if time is short — PEAD always
+   has priority). Run `scan-movers`. Pick up to 2 quality catalyst
+   candidates: identify the ACTUAL catalyst via WebSearch (FDA decision,
+   M&A fallout, guidance change, contract win, major upgrade — one clean
+   catalyst, not vague momentum), confirming volume >= ~2x, same stop
+   geometry rules as PEAD (stop set by the instrument; skip if > ~8%).
+   Build the same proposal JSON with "strategy": "news-v2" and submit via
+   `echo '<json>' | uv run autoswing shadow-propose -`. This opens a
+   VIRTUAL position only — shadow never places real orders. One-line
+   thesis per shadow entry in the digest; also note quality names you
+   passed on and why.
+5. `journal-note` digest: what you proposed and why, what you skipped and
+   why (one line each), gate outcomes, shadow entries taken.
 
 ### midday (~12:30 ET)
 1. `gate-status`, `get-positions`, `manage-positions` (report mode), and
@@ -110,6 +121,8 @@ You will be told which window this run is. Do that window's checklist only.
    two days in a row = drift exhausted -> reasonable to exit early; note it
    for tomorrow or exit now if clearly dead).
 3. `benchmark-mark` — record the daily equity vs VOO mark.
+3b. `shadow-mark` — close out virtual v2 positions that hit stop/target/
+   timebox; mention any shadow closes (with virtual P&L) in the digest.
 4. `recent-fills` — reconcile every execution today (entries, stops,
    targets) so the digest accounts for each closed trade with its realized
    P&L and a one-line verdict on the trade's quality.

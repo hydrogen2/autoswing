@@ -36,7 +36,14 @@ permissions.
    Flag judgment that looks sloppy (thesis-free entries, ignored flags) —
    don't fix judgment in code, report it.
 4. **Scoreboard**: read `state/benchmark.jsonl`; compute bot vs VOO since
-   inception and note drawdown. Read gate-status.
+   inception and note drawdown. Read gate-status. Add TWO attribution lines:
+   (a) strategy-only P&L — realized+unrealized excluding losses caused by
+   infrastructure incidents (the docs/incidents/ ledger defines these:
+   -$570 naked short 07-14, -$157 MMM friendly-fire 07-21, -$178 AEIS stop
+   geometry 08-05, plus any new incident you classify); (b) v2 shadow —
+   open virtual positions and ledger stats from state/shadow/ (positions
+   .json + ledger.jsonl). Keep raw, strategy-only, and shadow lines clearly
+   separated; never blend them.
 4b. **Gate-rejection audit**: count today's gate.decision rejections BY RULE
    and compare against the last few days. A rising share of portfolio-level
    rejections (max_gross_exposure, max_open_positions, kill_switch,

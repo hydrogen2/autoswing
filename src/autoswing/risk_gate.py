@@ -40,6 +40,7 @@ class TradeProposal:
     # "YYYY-MM-DD", "none" (verified no upcoming report), or "unknown"
     next_earnings_date: str = "unknown"
     avg_dollar_volume: float | None = None
+    strategy: str = "pead-v1"        # attribution tag; never affects rules
 
     def to_bracket(self) -> BracketProposal:
         return BracketProposal(

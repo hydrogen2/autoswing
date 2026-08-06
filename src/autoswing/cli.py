@@ -110,6 +110,27 @@ def main() -> None:
         "(shadow/enforce) comes from config and is human-only.",
     )
 
+    mv = sub.add_parser(
+        "scan-movers",
+        help="v2 shadow: big movers NOT explained by recent earnings",
+    )
+    mv.add_argument("--min-move", type=float, default=5.0)
+
+    sp = sub.add_parser(
+        "shadow-propose",
+        help="v2 shadow: run a proposal through the real gate, open a "
+        "VIRTUAL position if approved. Never places orders.",
+    )
+    sp.add_argument("proposal", help="proposal JSON path, or '-' for stdin")
+
+    sub.add_parser(
+        "shadow-mark",
+        help="v2 shadow: mark virtual positions vs real prices, close on "
+        "stop/target/timebox (preclose task)",
+    )
+
+    sub.add_parser("shadow-status", help="v2 shadow: open book + ledger stats")
+
     args = parser.parse_args()
     config = load_config()
     journal = Journal(config.journal_dir)
@@ -118,7 +139,8 @@ def main() -> None:
     try:
         if args.command == "journal-note":
             result = journal.record("brain.note", note=_resolve_note(args.note))
-        elif args.command in ("scan-candidates", "next-earnings"):
+        elif args.command in ("scan-candidates", "next-earnings", "scan-movers",
+                              "shadow-mark", "shadow-status"):
             result = _dispatch_data(config, journal, args)
         else:
             with Broker(config, journal) as broker:
@@ -217,6 +239,8 @@ def _dispatch(broker: Broker, args):
         return broker.recent_fills()
     if args.command == "reconcile":
         return _reconcile(broker)
+    if args.command == "shadow-propose":
+        return _shadow_propose(broker, args)
     if args.command == "benchmark-mark":
         return _benchmark_mark(broker)
     raise ValueError(f"unknown command {args.command!r}")
@@ -322,6 +346,57 @@ def _manage_positions(broker: Broker, enforce: bool, meta_path=None):
     save_meta(meta_path, meta)
     result = {"positions": report, "adopted_untracked": adopted, "enforce": enforce}
     broker.journal.record("manage.review", result=result)
+    return result
+
+
+def _shadow_propose(broker: Broker, args):
+    """Full gate evaluation, virtual position on approval. NEVER places."""
+    from datetime import date
+
+    from .risk_gate import TradeProposal
+    from .shadow import ShadowPosition, load_book, save_book
+
+    raw = sys.stdin.read() if args.proposal == "-" else open(args.proposal).read()
+    payload = json.loads(raw)
+    payload.setdefault("strategy", "news-v2")
+    proposal = TradeProposal(**payload)
+
+    gate = _make_gate(broker)
+    decision = gate.evaluate(proposal, broker.account_state())
+
+    entry_price = None
+    opened = False
+    if decision.approved:
+        quote = broker.get_quote(proposal.symbol)
+        entry_price = quote.get("last") or quote.get("close") or proposal.entry_limit
+        pos_path, _ = _shadow_paths()
+        book = load_book(pos_path)
+        if proposal.symbol.upper() not in book:
+            book[proposal.symbol.upper()] = ShadowPosition(
+                symbol=proposal.symbol.upper(),
+                strategy=proposal.strategy,
+                opened=date.today().isoformat(),
+                entry_price=float(entry_price),
+                quantity=proposal.quantity,
+                stop_loss=proposal.stop_loss,
+                take_profit=proposal.take_profit,
+                rationale=proposal.rationale,
+            )
+            save_book(pos_path, book)
+            opened = True
+
+    result = {
+        "shadow": True,
+        "approved": decision.approved,
+        "opened_virtual": opened,
+        "entry_price": entry_price,
+        "decision": decision.to_dict(),
+    }
+    broker.journal.record("shadow.proposal", proposal=payload, result={
+        "approved": decision.approved, "opened_virtual": opened,
+        "entry_price": entry_price,
+        "failed_rules": [r.rule for r in decision.rules if not r.passed],
+    })
     return result
 
 
@@ -479,7 +554,64 @@ def _dispatch_data(config, journal: Journal, args):
 
         return {"symbol": args.symbol.upper(),
                 "next_earnings_date": next_earnings_date(args.symbol)}
+    if args.command == "scan-movers":
+        from .data.movers import scan_movers
+
+        result = scan_movers(config.risk, min_move_pct=args.min_move)
+        journal.record("shadow.scan_movers", scanned=result["scanned"],
+                       passing=result["passing"],
+                       symbols=[c["symbol"] for c in result["candidates"]])
+        return result
+    if args.command == "shadow-mark":
+        return _shadow_mark(config, journal)
+    if args.command == "shadow-status":
+        from .config import PROJECT_ROOT
+        from .shadow import ledger_stats, load_book
+
+        book = load_book(PROJECT_ROOT / "state" / "shadow" / "positions.json")
+        return {
+            "open": [p.__dict__ for p in book.values()],
+            "ledger": ledger_stats(PROJECT_ROOT / "state" / "shadow" / "ledger.jsonl"),
+        }
     raise ValueError(f"unknown data command {args.command!r}")
+
+
+def _shadow_paths():
+    from .config import PROJECT_ROOT
+    d = PROJECT_ROOT / "state" / "shadow"
+    return d / "positions.json", d / "ledger.jsonl"
+
+
+def _shadow_mark(config, journal: Journal):
+    from datetime import date
+
+    from .data.prices import fetch_history
+    from .shadow import load_book, mark_position, save_book
+
+    pos_path, ledger_path = _shadow_paths()
+    book = load_book(pos_path)
+    if not book:
+        return {"open": 0, "closed_today": []}
+
+    history = fetch_history(sorted(book), period="3mo")
+    max_hold = int(config.strategy.get("max_hold_days", 15))
+    closed = []
+    for sym in list(book):
+        df = history.get(sym)
+        if df is None:
+            continue  # no data today; try again tomorrow
+        event = mark_position(book[sym], df, date.today(), max_hold)
+        if event:
+            ledger_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(ledger_path, "a") as f:
+                import json as _json
+                f.write(_json.dumps(event) + "\n")
+            journal.record("shadow.close", **{k: v for k, v in event.items()
+                                              if k != "event"})
+            closed.append(event)
+            del book[sym]
+    save_book(pos_path, book)
+    return {"open": len(book), "closed_today": closed}
 
 
 def _make_gate(broker: Broker):
@@ -526,6 +658,7 @@ def _propose_trade(broker: Broker, args):
             stop_loss=proposal.stop_loss,
             take_profit=proposal.take_profit,
             rationale=proposal.rationale,
+            strategy=proposal.strategy,
         )
         save_meta(_meta_path(), meta)
     return result

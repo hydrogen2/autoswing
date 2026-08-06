@@ -22,6 +22,7 @@ class PositionMeta:
     stop_loss: float
     take_profit: float
     rationale: str = ""
+    strategy: str = "pead-v1"  # attribution tag
 
 
 def load_meta(path: Path) -> dict[str, PositionMeta]:
