@@ -29,14 +29,18 @@ class Reaction:
 def _download_batch(symbols: list[str], period: str) -> dict[str, pd.DataFrame]:
     import yfinance as yf
 
+    # Yahoo spells share classes with dashes (BRK.B -> BRK-B); translate for
+    # the fetch, key results by the caller's original symbol.
+    yahoo = {sym: sym.replace(".", "-") for sym in symbols}
     data = yf.download(
-        symbols, period=period, group_by="ticker", auto_adjust=True,
-        threads=True, progress=False,
+        list(yahoo.values()), period=period, group_by="ticker",
+        auto_adjust=True, threads=True, progress=False,
     )
     out = {}
     for sym in symbols:
         try:
-            df = data[sym] if isinstance(data.columns, pd.MultiIndex) else data
+            df = (data[yahoo[sym]]
+                  if isinstance(data.columns, pd.MultiIndex) else data)
         except KeyError:
             continue
         df = df.dropna(subset=["Close"])

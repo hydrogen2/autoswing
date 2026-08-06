@@ -42,8 +42,12 @@ permissions.
    -$570 naked short 07-14, -$157 MMM friendly-fire 07-21, -$178 AEIS stop
    geometry 08-05, plus any new incident you classify); (b) v2 shadow —
    open virtual positions and ledger stats from state/shadow/ (positions
-   .json + ledger.jsonl). Keep raw, strategy-only, and shadow lines clearly
-   separated; never blend them.
+   .json + ledger.jsonl); (c) forecast experiment — read state/forecast/
+   (forecasts.jsonl + scores.jsonl) and report n scored, hit rates and
+   calibration BY TIER (deep vs quick); flag when a tier crosses n>=30
+   with a hit rate outside 45-55% — that is signal either direction.
+   Keep raw, strategy-only, shadow, and forecast lines clearly separated;
+   never blend them.
 4b. **Gate-rejection audit**: count today's gate.decision rejections BY RULE
    and compare against the last few days. A rising share of portfolio-level
    rejections (max_gross_exposure, max_open_positions, kill_switch,

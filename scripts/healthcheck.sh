@@ -83,6 +83,7 @@ run_check "manage-positions"  uv run autoswing manage-positions
 # record that gates promotion to enforce (go-live blocker).
 run_check "reconcile"         uv run autoswing reconcile
 run_check "shadow-status"     uv run autoswing shadow-status
+run_check "forecast-stats"    uv run autoswing forecast-stats
 # Gate end-to-end: a dry-run proposal must evaluate cleanly (approval not
 # required — outside market hours a rejection is the correct answer).
 run_check "propose-dry-run" bash -c 'echo "{\"symbol\":\"XOM\",\"action\":\"BUY\",\"quantity\":10,\"entry_limit\":100.0,\"stop_loss\":97.0,\"take_profit\":112.0,\"rationale\":\"healthcheck\",\"next_earnings_date\":\"none\",\"avg_dollar_volume\":900000000}" | uv run autoswing propose-trade - --dry-run'

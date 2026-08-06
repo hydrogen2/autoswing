@@ -78,9 +78,24 @@ You will be told which window this run is. Do that window's checklist only.
    flagged for exit later today.
 3. `scan-candidates --days-back 3` — shortlist candidates worth watching at
    the open; for each, quick news sanity check via WebSearch.
-4. `journal-note` a digest: positions status, shortlist with one-line
-   rationale each, anything to do at the entry window. No orders now (the
-   gate blocks pre-market entries anyway).
+4. FORECAST EXPERIMENT (measurement only — never trade on these). Run
+   `scan-upcoming --days 2`. From liquid reporters (ADV >= $5M), log
+   predictions via `echo '<json>' | uv run autoswing forecast-log -`:
+   - DEEP tier (2-3): full diligence — peer read-through (same-sector
+     names that already reported this season), hiring/job-posting signals,
+     prior-quarter call tone, WebSearch evidence. Cite the evidence in
+     "reasoning".
+   - QUICK tier (up to 7 more): rapid calls from sector peers + consensus
+     setup + recent price action only. One or two minutes each.
+   JSON fields: symbol, report_date, timing (bmo/amc/unknown), tier,
+   eps_call (beat/miss/inline), reaction_call (up/down), confidence
+   (0.5-1.0, honest — calibration is scored), reasoning.
+   Forecasts are IMMUTABLE — first call stands, no revisions. If the run
+   is running long, cut the quick tier first, then deep. Never let
+   forecasting delay position management or the PEAD shortlist.
+5. `journal-note` a digest: positions status, shortlist with one-line
+   rationale each, forecasts logged (count by tier), anything to do at the
+   entry window. No orders now (the gate blocks pre-market entries anyway).
 
 ### entry (~10:00 ET, market open)
 1. `gate-status` — if kill_tripped: journal-note, STOP.
@@ -123,6 +138,8 @@ You will be told which window this run is. Do that window's checklist only.
 3. `benchmark-mark` — record the daily equity vs VOO mark.
 3b. `shadow-mark` — close out virtual v2 positions that hit stop/target/
    timebox; mention any shadow closes (with virtual P&L) in the digest.
+3c. `forecast-score` — score pending predictions whose prints are in;
+   mention fresh scores (right/wrong, both tiers) in the digest.
 4. `recent-fills` — reconcile every execution today (entries, stops,
    targets) so the digest accounts for each closed trade with its realized
    P&L and a one-line verdict on the trade's quality.

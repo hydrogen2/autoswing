@@ -131,6 +131,25 @@ def main() -> None:
 
     sub.add_parser("shadow-status", help="v2 shadow: open book + ledger stats")
 
+    su = sub.add_parser(
+        "scan-upcoming",
+        help="forecast exp: who reports in the next N days (consensus, timing)",
+    )
+    su.add_argument("--days", type=int, default=2)
+
+    fl = sub.add_parser(
+        "forecast-log",
+        help="forecast exp: record an immutable pre-print prediction",
+    )
+    fl.add_argument("forecast", help="forecast JSON path, or '-' for stdin")
+
+    sub.add_parser(
+        "forecast-score",
+        help="forecast exp: score pending predictions against actuals (preclose)",
+    )
+
+    sub.add_parser("forecast-stats", help="forecast exp: hit rates + calibration by tier")
+
     args = parser.parse_args()
     config = load_config()
     journal = Journal(config.journal_dir)
@@ -140,7 +159,8 @@ def main() -> None:
         if args.command == "journal-note":
             result = journal.record("brain.note", note=_resolve_note(args.note))
         elif args.command in ("scan-candidates", "next-earnings", "scan-movers",
-                              "shadow-mark", "shadow-status"):
+                              "shadow-mark", "shadow-status", "scan-upcoming",
+                              "forecast-log", "forecast-score", "forecast-stats"):
             result = _dispatch_data(config, journal, args)
         else:
             with Broker(config, journal) as broker:
@@ -573,7 +593,145 @@ def _dispatch_data(config, journal: Journal, args):
             "open": [p.__dict__ for p in book.values()],
             "ledger": ledger_stats(PROJECT_ROOT / "state" / "shadow" / "ledger.jsonl"),
         }
+    if args.command == "scan-upcoming":
+        return _scan_upcoming(args.days, journal)
+    if args.command == "forecast-log":
+        return _forecast_log(args, journal)
+    if args.command == "forecast-score":
+        return _forecast_score(journal)
+    if args.command == "forecast-stats":
+        from .config import PROJECT_ROOT
+        from .forecast import compute_stats, load_jsonl
+
+        d = PROJECT_ROOT / "state" / "forecast"
+        return compute_stats(load_jsonl(d / "forecasts.jsonl"),
+                             load_jsonl(d / "scores.jsonl"))
     raise ValueError(f"unknown data command {args.command!r}")
+
+
+def _forecast_paths():
+    from .config import PROJECT_ROOT
+    d = PROJECT_ROOT / "state" / "forecast"
+    return d / "forecasts.jsonl", d / "scores.jsonl"
+
+
+def _scan_upcoming(days: int, journal: Journal):
+    from datetime import date, timedelta
+
+    from .data.earnings import fetch_calendar_day
+    from .data.prices import fetch_history
+
+    today = date.today()
+    rows = []
+    for offset in range(days + 1):
+        d = today + timedelta(days=offset)
+        if d.weekday() >= 5:
+            continue
+        for r in fetch_calendar_day(d):
+            rows.append({
+                "symbol": r.symbol, "company": r.company,
+                "report_date": r.report_date, "timing": r.timing,
+                "eps_forecast": r.eps_forecast, "num_estimates": r.num_estimates,
+                "market_cap": r.market_cap,
+            })
+    # Enrich the biggest 30 by market cap with liquidity data.
+    rows.sort(key=lambda r: r["market_cap"] or 0, reverse=True)
+    top = [r["symbol"] for r in rows[:30]]
+    history = fetch_history(top, period="1mo")
+    for r in rows[:30]:
+        df = history.get(r["symbol"])
+        if df is not None and len(df) >= 5:
+            r["last_close"] = round(float(df["Close"].iloc[-1]), 2)
+            r["adv_dollar_20d"] = round(float((df["Close"] * df["Volume"]).mean()), 0)
+    journal.record("forecast.scan_upcoming", count=len(rows),
+                   enriched=[r["symbol"] for r in rows[:30]])
+    return {"count": len(rows), "reporters": rows[:60]}
+
+
+def _forecast_log(args, journal: Journal):
+    from datetime import datetime, timezone
+
+    from .forecast import (
+        Forecast, append_jsonl, forecast_id, load_jsonl, validate_forecast,
+    )
+
+    raw = sys.stdin.read() if args.forecast == "-" else open(args.forecast).read()
+    payload = json.loads(raw)
+    errs = validate_forecast(payload)
+    if errs:
+        raise ValueError("invalid forecast: " + "; ".join(errs))
+
+    fpath, _ = _forecast_paths()
+    fid = forecast_id(payload["symbol"], payload["report_date"])
+    if any(f["id"] == fid for f in load_jsonl(fpath)):
+        raise ValueError(
+            f"forecast {fid} already exists — predictions are immutable, "
+            "the first call stands"
+        )
+    fc = Forecast(
+        id=fid, symbol=payload["symbol"].upper(),
+        made_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        report_date=payload["report_date"], timing=payload["timing"],
+        tier=payload["tier"], eps_call=payload["eps_call"],
+        reaction_call=payload["reaction_call"],
+        confidence=float(payload["confidence"]),
+        reasoning=payload["reasoning"],
+    )
+    from dataclasses import asdict
+    append_jsonl(fpath, asdict(fc))
+    journal.record("forecast.logged", **asdict(fc))
+    return {"logged": fid, "tier": fc.tier}
+
+
+def _forecast_score(journal: Journal):
+    from datetime import date, datetime, timezone
+
+    from .data.earnings import fetch_calendar_day
+    from .data.prices import fetch_history, reaction_metrics
+    from .forecast import append_jsonl, load_jsonl, score_forecast
+
+    fpath, spath = _forecast_paths()
+    forecasts = load_jsonl(fpath)
+    scored_ids = {s["forecast_id"] for s in load_jsonl(spath)}
+    today = date.today()
+    due = [f for f in forecasts
+           if f["id"] not in scored_ids
+           and date.fromisoformat(f["report_date"]) <= today]
+    if not due:
+        return {"scored": 0, "pending_future": len(forecasts) - len(scored_ids)}
+
+    calendar_cache: dict[str, dict] = {}
+    history = fetch_history(sorted({f["symbol"] for f in due}), period="1mo")
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    results, still_pending = [], 0
+    for f in due:
+        rdate = date.fromisoformat(f["report_date"])
+        key = f["report_date"]
+        if key not in calendar_cache:
+            calendar_cache[key] = {
+                r.symbol: r for r in fetch_calendar_day(rdate)
+            }
+        report = calendar_cache[key].get(f["symbol"])
+        surprise = report.surprise_pct if report else None
+
+        df = history.get(f["symbol"])
+        reaction = (reaction_metrics(f["symbol"], df, rdate, f["timing"])
+                    if df is not None else None)
+        move = reaction.move_pct if reaction else None
+
+        grace_expired = (today - rdate).days > 5
+        if surprise is None and move is None and not grace_expired:
+            still_pending += 1  # actuals not out yet; retry next run
+            continue
+        entry = score_forecast(f, surprise, move, now)
+        append_jsonl(spath, entry)
+        results.append({k: entry[k] for k in
+                        ("forecast_id", "eps_correct", "reaction_correct",
+                         "eps_actual", "reaction_actual", "scorable")})
+    journal.record("forecast.scored", scored=len(results),
+                   awaiting_actuals=still_pending, results=results)
+    return {"scored": len(results), "awaiting_actuals": still_pending,
+            "results": results}
 
 
 def _shadow_paths():
