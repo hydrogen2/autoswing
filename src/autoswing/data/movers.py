@@ -36,6 +36,42 @@ def _screen_symbols() -> list[str]:
     return out
 
 
+def _reported_recently(symbol: str, days_back: int,
+                       today: date) -> bool | None:
+    """Second-source earnings check via yfinance per-symbol dates.
+
+    The calendar feed can simply lack a symbol (AXTI 2026-08-07), and a
+    missing row reads as "didn't report" — the staleness family's exact
+    shape. None means this source couldn't answer either; the caller must
+    say so, never treat it as clear.
+    """
+    import yfinance as yf
+
+    try:
+        df = yf.Ticker(symbol).get_earnings_dates(limit=8)
+    except Exception:
+        return None
+    if df is None or len(df) == 0:
+        return None
+    window_start = today - timedelta(days=days_back)
+    return any(window_start <= d.date() <= today for d in df.index)
+
+
+def apply_earnings_cross_check(row: dict,
+                               reported_recently: bool | None) -> None:
+    """Fold the second-source answer into a candidate row: a confirmed
+    recent report rejects it (PEAD turf), an unavailable source is labeled
+    unverified — silence is how AXTI leaked."""
+    if reported_recently is True:
+        row["rejects"].append(
+            "recent_earnings (yfinance cross-check — missing from calendar feed)")
+    elif reported_recently is None:
+        row["earnings_check"] = ("unverified — second source unavailable; "
+                                 "verify catalyst is not earnings via news")
+    else:
+        row["earnings_check"] = "clear"
+
+
 def scan_movers(risk_config: dict, min_move_pct: float = 5.0,
                 earnings_exclusion_days: int = 5,
                 today: date | None = None) -> dict:
@@ -86,6 +122,9 @@ def scan_movers(risk_config: dict, min_move_pct: float = 5.0,
                 rejects.append(f"illiquid: ADV ${adv:,.0f}")
             if float(last["Close"]) < floors["min_price"]:
                 rejects.append(f"price < ${floors['min_price']}")
+        if not rejects:
+            apply_earnings_cross_check(
+                row, _reported_recently(sym, earnings_exclusion_days, today))
         (candidates if not rejects else rejected).append(row)
 
     candidates.sort(key=lambda c: c["move_pct"], reverse=True)
