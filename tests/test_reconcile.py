@@ -51,6 +51,25 @@ class TestConsistentStates:
         assert decisions == []
         assert state.get("XOM", SymbolState()).status == "consistent"
 
+    def test_unfilled_bracket_with_exit_legs_is_not_orphan(self):
+        # Regression (VOYG 2026-08-06): parent BUY working, both exit legs
+        # PreSubmitted, no position — the reconciler classified the legs as
+        # a suspect orphan and after 90+ minutes decided cancel_orphans in
+        # shadow. Cancelling protection off a fillable entry is the 07-14
+        # naked-position family; a working BUY means pending entry, full stop.
+        orders = [entry_order(sym="VOYG", oid=95, qty=140),
+                  target_order(sym="VOYG", oid=96, qty=140),
+                  stop_order(sym="VOYG", oid=97, qty=140)]
+        s1, d1, _ = evaluate(obs(orders=orders), {}, {}, CFG, now=T0)
+        assert d1 == []
+        assert s1["VOYG"].status == "consistent"
+        # ...and it must never mature into a decision, however long it sits.
+        t2 = T0 + timedelta(minutes=300)
+        s2, d2, notes = evaluate(obs(orders=orders, ts=t2), s1, {}, CFG, now=t2)
+        assert d2 == []
+        assert s2["VOYG"].status == "consistent"
+        assert any("pending entry" in n for n in notes)
+
     def test_short_position_is_flagged_never_touched(self):
         state, decisions, notes = evaluate(
             obs(positions={"PENG": -96}), {}, INTENT, CFG, now=T0,

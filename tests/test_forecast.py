@@ -2,6 +2,7 @@
 scoring, calibration stats."""
 
 from autoswing.forecast import (
+    awaiting_actuals,
     classify_eps,
     classify_reaction,
     compute_stats,
@@ -106,3 +107,38 @@ class TestStats:
     def test_empty(self):
         st = compute_stats([], [])
         assert st["tiers"]["deep"]["n_scored"] == 0
+
+    def test_unknown_leg_excluded_from_hit_rate_not_counted_wrong(self):
+        # Regression (VST/TTWO 2026-08-07): scored before the calendar
+        # published actuals — eps_actual "unknown", eps_correct False — and
+        # the forced miss was pooled into the EPS hit rate. An unmeasured
+        # leg must drop out of that leg's denominator entirely.
+        scores = [
+            {"forecast_id": "VST-d", "tier": "quick", "eps_actual": "unknown",
+             "eps_correct": False, "reaction_actual": "flat",
+             "reaction_correct": False, "confidence": 0.55, "scorable": True},
+            {"forecast_id": "OK-d", "tier": "quick", "eps_actual": "beat",
+             "eps_correct": True, "reaction_actual": "up",
+             "reaction_correct": True, "confidence": 0.6, "scorable": True},
+        ]
+        st = compute_stats([], scores)
+        q = st["tiers"]["quick"]
+        assert q["n_scored"] == 2
+        assert q["eps_n"] == 1 and q["eps_hit_rate"] == 1.0
+        assert q["reaction_n"] == 2 and q["reaction_hit_rate"] == 0.5
+        # calibration only over reaction-known rows (both are: flat is known)
+        assert q["calibration"]["50-60"]["n"] == 1
+        assert q["calibration"]["60-70"]["n"] == 1
+
+
+class TestAwaitingActuals:
+    def test_partial_actuals_defer_within_grace(self):
+        # Reaction known but EPS unpublished: scoring now burns the EPS leg
+        # forever (one score event per forecast id). Wait out the grace.
+        assert awaiting_actuals(None, 4.9, grace_expired=False)
+        assert awaiting_actuals(3.0, None, grace_expired=False)
+        assert awaiting_actuals(None, None, grace_expired=False)
+
+    def test_grace_expiry_scores_what_is_known(self):
+        assert not awaiting_actuals(None, 4.9, grace_expired=True)
+        assert not awaiting_actuals(3.0, 4.9, grace_expired=False)

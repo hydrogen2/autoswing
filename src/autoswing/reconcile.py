@@ -102,9 +102,12 @@ def evaluate(
 
     working = [o for o in obs.orders if o.status in WORKING_STATUSES]
     sells_by_sym: dict[str, list[OrderObs]] = {}
+    buys_by_sym: dict[str, list[OrderObs]] = {}
     for o in working:
         if o.action == "SELL":
             sells_by_sym.setdefault(o.symbol, []).append(o)
+        elif o.action == "BUY":
+            buys_by_sym.setdefault(o.symbol, []).append(o)
 
     state: dict[str, SymbolState] = {}
     decisions: list[dict] = []
@@ -124,6 +127,18 @@ def evaluate(
             continue
 
         # --- ORPHAN direction: SELL orders working, no shares ---------------
+        if sells and qty == 0 and buys_by_sym.get(sym):
+            # Unfilled bracket: the parent BUY is still working and the SELLs
+            # are its exit legs, held by the broker until the parent fills.
+            # Not an orphan — cancelling the legs would strip protection off
+            # an entry that can still fill (VOYG 2026-08-06 sat in this state
+            # for 5 hours and matured to a cancel_orphans decision in shadow).
+            if st.status != "consistent":
+                notes.append(f"{sym}: back to consistent (was {st.status})")
+            notes.append(f"{sym}: pending entry — working BUY with exit legs, "
+                         "no fill yet; not an orphan")
+            state[sym] = SymbolState(status="consistent")
+            continue
         if sells and qty == 0:
             est_notional = sum(
                 o.quantity * intent.get(sym, {}).get("stop_loss", 0.0) for o in sells

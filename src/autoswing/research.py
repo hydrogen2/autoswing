@@ -47,14 +47,38 @@ class LiveTrade:
 
 def extract_live_trades(journal_dir: Path) -> list[LiveTrade]:
     """Approved, non-dry-run PEAD proposals from the journal — the bot's
-    actual entries (entry price approximated by the limit)."""
+    actual entries (entry price approximated by the limit).
+
+    A proposal only counts if the entry actually filled: same-day BUY fill
+    evidence from broker.recent_fills, or an entry leg journaled as already
+    "Filled" in broker.place_bracket_order. Approval is not a fill — VOYG
+    2026-08-06 was approved and placed, ran away 9% unfilled, was cancelled,
+    and still replayed here as a +2R win. Same-day matching (not order_id,
+    which the broker reuses across resets) so a next-day re-entry fill can't
+    validate an earlier unfilled attempt."""
+    EVENT_KEYS = ('"gate.decision"', '"broker.place_bracket_order"',
+                  '"broker.recent_fills"')
     trades: dict[str, LiveTrade] = {}
+    filled: set[str] = set()  # "SYMBOL-YYYY-MM-DD" with buy-fill evidence
     for f in sorted(journal_dir.glob("*.jsonl")):
         for line in f.read_text().splitlines():
-            if '"gate.decision"' not in line:
+            if not any(k in line for k in EVENT_KEYS):
                 continue
             e = json.loads(line)
-            if e.get("event") != "gate.decision" or e.get("dry_run"):
+            ev = e.get("event")
+            if ev == "broker.recent_fills":
+                for fill in e.get("result") or []:
+                    if fill.get("side") == "BOT":
+                        filled.add(f"{fill['symbol'].upper()}"
+                                   f"-{str(fill.get('time', ''))[:10]}")
+                continue
+            if ev == "broker.place_bracket_order":
+                r = e.get("result", {})
+                if any(o.get("role") == "entry" and o.get("status") == "Filled"
+                       for o in r.get("orders", [])):
+                    filled.add(f"{r['symbol'].upper()}-{e['ts'][:10]}")
+                continue
+            if ev != "gate.decision" or e.get("dry_run"):
                 continue
             if not e.get("decision", {}).get("approved"):
                 continue
@@ -69,7 +93,7 @@ def extract_live_trades(journal_dir: Path) -> list[LiveTrade]:
                 entry=float(p["entry_limit"]), stop=float(p["stop_loss"]),
                 target=float(p["take_profit"]), quantity=int(p["quantity"]),
             )
-    return list(trades.values())
+    return [t for key, t in trades.items() if key in filled]
 
 
 def simulate_exit(trade: LiveTrade, df, rule: dict,

@@ -1,5 +1,6 @@
 """Research instrument tests: counterfactual exit engine and skip scoring."""
 
+import json
 from datetime import date
 
 import pandas as pd
@@ -7,6 +8,7 @@ import pandas as pd
 from autoswing.research import (
     LiveTrade,
     compare_exit_rules,
+    extract_live_trades,
     score_skips,
     simulate_exit,
     validate_skip,
@@ -74,6 +76,67 @@ class TestSimulateExit:
         r15 = simulate_exit(trade(), df, BASELINE)
         assert r10["reason"] == r15["reason"] == "timebox"
         assert r10["exit_date"] < r15["exit_date"]
+
+
+def _gate_approval(symbol, ts, quantity=140):
+    return {
+        "ts": ts, "event": "gate.decision", "dry_run": False,
+        "proposal": {"symbol": symbol, "action": "BUY", "quantity": quantity,
+                     "entry_limit": 34.9, "stop_loss": 32.3,
+                     "take_profit": 40.3, "rationale": "PEAD: thesis"},
+        "decision": {"approved": True},
+    }
+
+
+class TestExtractLiveTrades:
+    def write_journal(self, tmp_path, events):
+        p = tmp_path / "2026-08-06.jsonl"
+        p.write_text("\n".join(json.dumps(e) for e in events) + "\n")
+        return tmp_path
+
+    def test_fill_evidence_gates_inclusion(self, tmp_path):
+        # Regression (VOYG 2026-08-06): approved + placed, entry limit left
+        # 9% behind, cancelled unfilled — yet replayed as a +2R win. An
+        # approval without fill evidence must not enter the counterfactual.
+        events = [
+            _gate_approval("VOYG", "2026-08-06T14:10:18+00:00"),
+            {"ts": "2026-08-06T14:10:20+00:00",
+             "event": "broker.place_bracket_order",
+             "result": {"symbol": "VOYG", "orders": [
+                 {"order_id": 95, "role": "entry", "status": "Submitted"}]}},
+            _gate_approval("VCTR", "2026-08-06T14:11:00+00:00", quantity=44),
+            {"ts": "2026-08-06T15:46:43+00:00", "event": "broker.recent_fills",
+             "result": [{"symbol": "VCTR", "side": "BOT", "shares": 44.0,
+                         "price": 109.75, "time": "2026-08-06 14:11:19+00:00",
+                         "order_id": 102}]},
+        ]
+        trades = extract_live_trades(self.write_journal(tmp_path, events))
+        assert [t.symbol for t in trades] == ["VCTR"]
+
+    def test_entry_leg_already_filled_in_place_event_counts(self, tmp_path):
+        # WDFC 2026-07-10 filled instantly: the fill shows only as the entry
+        # leg's status in broker.place_bracket_order, never in recent_fills.
+        events = [
+            _gate_approval("WDFC", "2026-08-06T14:04:35+00:00", quantity=25),
+            {"ts": "2026-08-06T14:04:37+00:00",
+             "event": "broker.place_bracket_order",
+             "result": {"symbol": "WDFC", "orders": [
+                 {"order_id": 21, "role": "entry", "status": "Filled"}]}},
+        ]
+        trades = extract_live_trades(self.write_journal(tmp_path, events))
+        assert [t.symbol for t in trades] == ["WDFC"]
+
+    def test_next_day_fill_does_not_validate_prior_attempt(self, tmp_path):
+        # Same-day matching: a re-entry that fills tomorrow must not launder
+        # today's unfilled attempt into the trade list.
+        events = [
+            _gate_approval("VOYG", "2026-08-06T14:10:18+00:00"),
+            {"ts": "2026-08-07T15:46:43+00:00", "event": "broker.recent_fills",
+             "result": [{"symbol": "VOYG", "side": "BOT", "shares": 140.0,
+                         "price": 36.0, "time": "2026-08-07 14:11:19+00:00",
+                         "order_id": 120}]},
+        ]
+        assert extract_live_trades(self.write_journal(tmp_path, events)) == []
 
 
 class TestCompareRules:

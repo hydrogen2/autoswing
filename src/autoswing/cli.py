@@ -769,7 +769,9 @@ def _forecast_score(journal: Journal):
 
     from .data.earnings import fetch_calendar_day
     from .data.prices import fetch_history, reaction_metrics
-    from .forecast import append_jsonl, load_jsonl, score_forecast
+    from .forecast import (
+        append_jsonl, awaiting_actuals, load_jsonl, score_forecast,
+    )
 
     fpath, spath = _forecast_paths()
     forecasts = load_jsonl(fpath)
@@ -801,8 +803,8 @@ def _forecast_score(journal: Journal):
         move = reaction.move_pct if reaction else None
 
         grace_expired = (today - rdate).days > 5
-        if surprise is None and move is None and not grace_expired:
-            still_pending += 1  # actuals not out yet; retry next run
+        if awaiting_actuals(surprise, move, grace_expired):
+            still_pending += 1  # a leg is still unpublished; retry next run
             continue
         entry = score_forecast(f, surprise, move, now)
         append_jsonl(spath, entry)

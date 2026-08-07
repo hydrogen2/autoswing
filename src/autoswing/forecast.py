@@ -108,6 +108,18 @@ def classify_reaction(move_pct: float) -> str:
     return "flat"
 
 
+def awaiting_actuals(surprise_pct: float | None, move_pct: float | None,
+                     grace_expired: bool) -> bool:
+    """Defer scoring while ANY leg is missing and the grace window is open.
+
+    Scoring with a missing leg burns that leg forever (one score event per
+    forecast id, ledger append-only). VST/TTWO 2026-08-07 were scored with
+    eps_actual "unknown" hours after a BMO report whose actuals the calendar
+    hadn't published yet — a late data feed rendered as a permanent miss.
+    """
+    return (surprise_pct is None or move_pct is None) and not grace_expired
+
+
 def score_forecast(fc: dict, surprise_pct: float | None,
                    move_pct: float | None, scored_at: str) -> dict:
     eps_actual = classify_eps(surprise_pct)
@@ -136,16 +148,24 @@ def compute_stats(forecasts: list[dict], scores: list[dict]) -> dict:
            "tiers": {}}
     for tier in TIERS:
         ss = [s for s in scores if s["tier"] == tier and s.get("scorable")]
-        n = len(ss)
+        # Per-leg denominators: a leg whose actual is "unknown" is unmeasured,
+        # not wrong — pooling it forces a miss into the hit rate (VST/TTWO
+        # 2026-08-07 dragged quick-tier EPS down with unpublished actuals).
+        eps_ss = [s for s in ss if s.get("eps_actual") != "unknown"]
+        rx_ss = [s for s in ss if s.get("reaction_actual") != "unknown"]
         tier_stats = {
-            "n_scored": n,
-            "eps_hit_rate": round(sum(s["eps_correct"] for s in ss) / n, 3) if n else None,
-            "reaction_hit_rate": round(sum(s["reaction_correct"] for s in ss) / n, 3) if n else None,
+            "n_scored": len(ss),
+            "eps_n": len(eps_ss),
+            "eps_hit_rate": round(sum(s["eps_correct"] for s in eps_ss)
+                                  / len(eps_ss), 3) if eps_ss else None,
+            "reaction_n": len(rx_ss),
+            "reaction_hit_rate": round(sum(s["reaction_correct"] for s in rx_ss)
+                                       / len(rx_ss), 3) if rx_ss else None,
             "calibration": {},
         }
         for lo, hi, label in ((0.5, 0.6, "50-60"), (0.6, 0.7, "60-70"),
                               (0.7, 0.8, "70-80"), (0.8, 1.01, "80-100")):
-            bucket = [s for s in ss if lo <= s["confidence"] < hi]
+            bucket = [s for s in rx_ss if lo <= s["confidence"] < hi]
             if bucket:
                 tier_stats["calibration"][label] = {
                     "n": len(bucket),
