@@ -37,13 +37,16 @@ def _screen_symbols() -> list[str]:
 
 
 def _reported_recently(symbol: str, days_back: int,
-                       today: date) -> bool | None:
+                       today: date) -> tuple[bool, date | None] | None:
     """Second-source earnings check via yfinance per-symbol dates.
 
     The calendar feed can simply lack a symbol (AXTI 2026-08-07), and a
     missing row reads as "didn't report" — the staleness family's exact
     shape. None means this source couldn't answer either; the caller must
-    say so, never treat it as clear.
+    say so, never treat it as clear. Otherwise returns (reported within
+    the window, most recent past report date): without the date, a bare
+    "clear" on a move that news attributes to a report just outside the
+    window reads as a calendar gap (BFLY/VRTX 2026-08-10).
     """
     import yfinance as yf
 
@@ -53,23 +56,35 @@ def _reported_recently(symbol: str, days_back: int,
         return None
     if df is None or len(df) == 0:
         return None
+    past = [d.date() for d in df.index if d.date() <= today]
     window_start = today - timedelta(days=days_back)
-    return any(window_start <= d.date() <= today for d in df.index)
+    return any(d >= window_start for d in past), (max(past) if past else None)
 
 
 def apply_earnings_cross_check(row: dict,
-                               reported_recently: bool | None) -> None:
+                               check: tuple[bool, date | None] | None,
+                               today: date) -> None:
     """Fold the second-source answer into a candidate row: a confirmed
     recent report rejects it (PEAD turf), an unavailable source is labeled
-    unverified — silence is how AXTI leaked."""
-    if reported_recently is True:
-        row["rejects"].append(
-            "recent_earnings (yfinance cross-check — missing from calendar feed)")
-    elif reported_recently is None:
+    unverified — silence is how AXTI leaked. A clear verdict names the last
+    known report so earnings follow-through outside the exclusion window is
+    readable as such rather than as another calendar gap."""
+    if check is None:
         row["earnings_check"] = ("unverified — second source unavailable; "
                                  "verify catalyst is not earnings via news")
+        return
+    within_window, last_report = check
+    if within_window:
+        row["rejects"].append(
+            "recent_earnings (yfinance cross-check — missing from calendar feed)")
+    elif last_report is not None:
+        age = (today - last_report).days
+        row["earnings_check"] = (
+            f"clear — last reported {last_report.isoformat()} ({age}d ago); "
+            "a move attributed to that report is follow-through, "
+            "not a calendar gap")
     else:
-        row["earnings_check"] = "clear"
+        row["earnings_check"] = "clear — no past report on record"
 
 
 def scan_movers(risk_config: dict, min_move_pct: float = 5.0,
@@ -124,7 +139,8 @@ def scan_movers(risk_config: dict, min_move_pct: float = 5.0,
                 rejects.append(f"price < ${floors['min_price']}")
         if not rejects:
             apply_earnings_cross_check(
-                row, _reported_recently(sym, earnings_exclusion_days, today))
+                row, _reported_recently(sym, earnings_exclusion_days, today),
+                today)
         (candidates if not rejects else rejected).append(row)
 
     candidates.sort(key=lambda c: c["move_pct"], reverse=True)
