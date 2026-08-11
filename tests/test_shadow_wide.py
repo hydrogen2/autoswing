@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import pandas as pd
 import pytest
 
-from autoswing.cli import _shadow_mark, _shadow_paths, _shadow_propose
+from autoswing.commands.shadow import _shadow_mark, _shadow_paths, _shadow_propose
 from autoswing.journal import Journal
 from autoswing.risk_gate import AccountState, OpenOrderInfo, PositionInfo
 from autoswing.shadow import CAPACITY_RULES, WIDE_NOTIONAL, load_book

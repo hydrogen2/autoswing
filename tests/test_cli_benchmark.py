@@ -9,7 +9,7 @@ The mark must replace an existing same-date row (last-write-wins), and the
 merge must self-heal a series that already carries same-date duplicates.
 """
 
-from autoswing.cli import _merge_benchmark_entry
+from autoswing.commands.trading import _merge_benchmark_entry
 
 
 def _dates(series):

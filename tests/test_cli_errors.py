@@ -7,7 +7,8 @@ is empty. The journal is the only forensic record — blank errors are bugs.
 
 import pytest
 
-from autoswing.cli import _build_proposal, _error_text
+from autoswing.cli import _error_text
+from autoswing.commands.trading import _build_proposal
 
 
 class TestBuildProposal:

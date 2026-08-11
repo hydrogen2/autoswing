@@ -14,7 +14,7 @@ import json
 
 import pytest
 
-from autoswing.cli import _manage_positions
+from autoswing.commands.trading import _manage_positions
 from autoswing.journal import Journal
 from autoswing.manage import PositionMeta, load_meta, save_meta
 
