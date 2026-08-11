@@ -122,14 +122,22 @@ def main() -> None:
         "VIRTUAL position if approved. Never places orders.",
     )
     sp.add_argument("proposal", help="proposal JSON path, or '-' for stdin")
+    sp.add_argument(
+        "--wide", action="store_true",
+        help="wide-PEAD measurement ledger: capacity gate rules become "
+        "informational, quantity standardized to a fixed notional, "
+        "separate book/ledger. Strategy-definition rules still block.",
+    )
 
     sub.add_parser(
         "shadow-mark",
-        help="v2 shadow: mark virtual positions vs real prices, close on "
-        "stop/target/timebox (preclose task)",
+        help="shadow books: mark virtual positions vs real prices, close on "
+        "stop/target/timebox (preclose task; covers v2 and wide-PEAD)",
     )
 
-    sub.add_parser("shadow-status", help="v2 shadow: open book + ledger stats")
+    sub.add_parser("shadow-status",
+                   help="shadow books: open positions + ledger stats "
+                   "(v2 and wide-PEAD)")
 
     su = sub.add_parser(
         "scan-upcoming",
@@ -387,25 +395,42 @@ def _manage_positions(broker: Broker, enforce: bool, meta_path=None):
 
 
 def _shadow_propose(broker: Broker, args):
-    """Full gate evaluation, virtual position on approval. NEVER places."""
+    """Full gate evaluation, virtual position on approval. NEVER places.
+
+    --wide: the wide-PEAD measurement book. The gate still runs in full so
+    the journal keeps every would-be verdict, but capacity-class failures
+    (CAPACITY_RULES) do not block the virtual entry, and quantity is
+    standardized to WIDE_NOTIONAL so the series stays comparable across
+    live sizing changes."""
     from datetime import date
 
-    from .shadow import ShadowPosition, load_book, save_book
+    from .shadow import (
+        CAPACITY_RULES, WIDE_NOTIONAL, ShadowPosition, load_book, save_book,
+    )
 
+    wide = bool(getattr(args, "wide", False))
     raw = sys.stdin.read() if args.proposal == "-" else open(args.proposal).read()
     payload = json.loads(raw)
-    payload.setdefault("strategy", "news-v2")
+    payload.setdefault("strategy", "pead-wide" if wide else "news-v2")
     proposal = _build_proposal(payload)
+    if wide:
+        proposal.quantity = max(1, int(WIDE_NOTIONAL // proposal.entry_limit))
 
     gate = _make_gate(broker)
     decision = gate.evaluate(proposal, broker.account_state())
 
+    blocking_failures = [r.rule for r in decision.rules
+                         if not r.passed and not (wide and r.rule in CAPACITY_RULES)]
+    capacity_failures = [r.rule for r in decision.rules
+                         if not r.passed and wide and r.rule in CAPACITY_RULES]
+    accepted = not blocking_failures
+
     entry_price = None
     opened = False
-    if decision.approved:
+    if accepted:
         quote = broker.get_quote(proposal.symbol)
         entry_price = quote.get("last") or quote.get("close") or proposal.entry_limit
-        pos_path, _ = _shadow_paths()
+        pos_path, _ = _shadow_paths(wide=wide)
         book = load_book(pos_path)
         if proposal.symbol.upper() not in book:
             book[proposal.symbol.upper()] = ShadowPosition(
@@ -423,15 +448,20 @@ def _shadow_propose(broker: Broker, args):
 
     result = {
         "shadow": True,
-        "approved": decision.approved,
+        "wide": wide,
+        "approved": accepted,
         "opened_virtual": opened,
         "entry_price": entry_price,
         "decision": decision.to_dict(),
     }
+    if wide:
+        result["capacity_failures_informational"] = capacity_failures
     broker.journal.record("shadow.proposal", proposal=payload, result={
-        "approved": decision.approved, "opened_virtual": opened,
+        "wide": wide,
+        "approved": accepted, "opened_virtual": opened,
         "entry_price": entry_price,
-        "failed_rules": [r.rule for r in decision.rules if not r.passed],
+        "failed_rules": blocking_failures,
+        "capacity_failures_informational": capacity_failures,
     })
     return result
 
@@ -612,14 +642,17 @@ def _dispatch_data(config, journal: Journal, args):
     if args.command == "shadow-mark":
         return _shadow_mark(config, journal)
     if args.command == "shadow-status":
-        from .config import PROJECT_ROOT
         from .shadow import ledger_stats, load_book
 
-        book = load_book(PROJECT_ROOT / "state" / "shadow" / "positions.json")
-        return {
-            "open": [p.__dict__ for p in book.values()],
-            "ledger": ledger_stats(PROJECT_ROOT / "state" / "shadow" / "ledger.jsonl"),
-        }
+        out = {}
+        for label, wide in (("v2", False), ("wide", True)):
+            pos_path, ledger_path = _shadow_paths(wide=wide)
+            book = load_book(pos_path)
+            out[label] = {
+                "open": [p.__dict__ for p in book.values()],
+                "ledger": ledger_stats(ledger_path),
+            }
+        return out
     if args.command == "scan-upcoming":
         return _scan_upcoming(args.days, journal)
     if args.command == "forecast-log":
@@ -817,9 +850,11 @@ def _forecast_score(journal: Journal):
             "results": results}
 
 
-def _shadow_paths():
+def _shadow_paths(wide: bool = False):
     from .config import PROJECT_ROOT
     d = PROJECT_ROOT / "state" / "shadow"
+    if wide:
+        return d / "wide_positions.json", d / "wide_ledger.jsonl"
     return d / "positions.json", d / "ledger.jsonl"
 
 
@@ -829,30 +864,34 @@ def _shadow_mark(config, journal: Journal):
     from .data.prices import fetch_history
     from .shadow import load_book, mark_position, save_book
 
-    pos_path, ledger_path = _shadow_paths()
-    book = load_book(pos_path)
-    if not book:
-        return {"open": 0, "closed_today": []}
-
-    history = fetch_history(sorted(book), period="3mo")
     max_hold = int(config.strategy.get("max_hold_days", 15))
-    closed = []
-    for sym in list(book):
-        df = history.get(sym)
-        if df is None:
-            continue  # no data today; try again tomorrow
-        event = mark_position(book[sym], df, date.today(), max_hold)
-        if event:
-            ledger_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(ledger_path, "a") as f:
-                import json as _json
-                f.write(_json.dumps(event) + "\n")
-            journal.record("shadow.close", **{k: v for k, v in event.items()
-                                              if k != "event"})
-            closed.append(event)
-            del book[sym]
-    save_book(pos_path, book)
-    return {"open": len(book), "closed_today": closed}
+    out = {}
+    for label, wide in (("v2", False), ("wide", True)):
+        pos_path, ledger_path = _shadow_paths(wide=wide)
+        book = load_book(pos_path)
+        if not book:
+            out[label] = {"open": 0, "closed_today": []}
+            continue
+
+        history = fetch_history(sorted(book), period="3mo")
+        closed = []
+        for sym in list(book):
+            df = history.get(sym)
+            if df is None:
+                continue  # no data today; try again tomorrow
+            event = mark_position(book[sym], df, date.today(), max_hold)
+            if event:
+                ledger_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(ledger_path, "a") as f:
+                    f.write(json.dumps(event) + "\n")
+                journal.record("shadow.close", book=label,
+                               **{k: v for k, v in event.items()
+                                  if k != "event"})
+                closed.append(event)
+                del book[sym]
+        save_book(pos_path, book)
+        out[label] = {"open": len(book), "closed_today": closed}
+    return out
 
 
 def _make_gate(broker: Broker):

@@ -1,9 +1,20 @@
-"""Shadow book: virtual execution for candidate strategies (v2 news-catalyst).
+"""Shadow book: virtual execution for candidate strategies.
 
-A shadow proposal runs through the REAL risk gate (so the record includes
-would-be gate verdicts) but никогда places an order. Approved proposals open
-a virtual position; a daily mark closes them against real subsequent prices
-using the same bracket + time-box rules the live book uses.
+Two books share this machinery:
+
+- v2 news-catalyst (state/shadow/positions.json): a shadow proposal runs
+  through the REAL risk gate (so the record includes would-be gate
+  verdicts) but never places an order.
+- wide-PEAD measurement (state/shadow/wide_positions.json): every
+  mechanically-qualifying PEAD candidate — including ones entered live and
+  ones blocked purely by capacity — logged at a standardized notional.
+  Capacity-class gate rules (CAPACITY_RULES) are recorded but do not block;
+  strategy-definition rules still do. Purpose: accrue strategy-edge sample
+  size decoupled from the account's capital constraints.
+
+Approved proposals open a virtual position; a daily mark closes them
+against real subsequent prices using the same bracket + time-box rules the
+live book uses.
 
 Fill model (documented conservatism): marks use daily bars from the session
 of entry onward. When a bar's low breaches the stop AND its high reaches the
@@ -25,6 +36,23 @@ from datetime import date
 from pathlib import Path
 
 from .manage import trading_days_between
+
+# Wide-PEAD ledger: fixed virtual notional per position. Deliberately NOT
+# derived from live sizing config — the measurement series must stay
+# comparable across live sizing changes (15%->10% on 2026-08-05 would have
+# silently rescaled it).
+WIDE_NOTIONAL = 5000.0
+
+# Gate rules that reflect the account's capacity/state rather than the
+# strategy's definition. For --wide proposals these are recorded as
+# informational; a failure does not block the virtual entry. Everything
+# else (bracket_structure, market_hours, earnings_blackout, liquidity,
+# min_price, short_selling, kill_switch) still blocks.
+CAPACITY_RULES = frozenset({
+    "daily_loss_halt", "risk_per_trade", "max_position_size",
+    "max_open_positions", "max_gross_exposure", "duplicate_position",
+    "core_overlap", "pdt_guard",
+})
 
 
 @dataclass

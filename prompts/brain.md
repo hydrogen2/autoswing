@@ -113,7 +113,19 @@ You will be told which window this run is. Do that window's checklist only.
    `next-earnings <SYM>`, then build the proposal JSON per the sizing
    rules and submit: `echo '<json>' | uv run autoswing propose-trade -`.
    Include a rationale field with the thesis in one or two sentences.
-5. V2 SHADOW (after PEAD work; skip entirely if time is short — PEAD always
+5. WIDE-PEAD LEDGER (measurement only — accrues strategy-edge sample size
+   decoupled from capital). For EVERY candidate that passed your quality
+   bar — the ones you just proposed live AND the ones you'd have taken
+   but for capacity (max-2/day, gross exposure, position caps) — submit
+   the same proposal JSON via `echo '<json>' | uv run autoswing
+   shadow-propose --wide -`. Rules: (a) include live entries too, else
+   the ledger only measures rejects and the sample is biased; (b) do NOT
+   wide-log names skipped for quality, news, stop-geometry, or liquidity
+   reasons — those are not strategy-qualifying; (c) quantity is
+   standardized by the CLI, so the sizing math doesn't matter here —
+   reuse the proposal as-is. This opens VIRTUAL positions only and never
+   affects the live book.
+6. V2 SHADOW (after PEAD work; skip entirely if time is short — PEAD always
    has priority). Run `scan-movers`. Pick up to 2 quality catalyst
    candidates: identify the ACTUAL catalyst via WebSearch (FDA decision,
    M&A fallout, guidance change, contract win, major upgrade — one clean
@@ -124,14 +136,15 @@ You will be told which window this run is. Do that window's checklist only.
    VIRTUAL position only — shadow never places real orders. One-line
    thesis per shadow entry in the digest; also note quality names you
    passed on and why.
-6. SKIP LEDGER: for every candidate you seriously considered and rejected
+7. SKIP LEDGER: for every candidate you seriously considered and rejected
    (max ~6/day), log it structurally:
    `echo '{"symbol":"X","category":"low_quality_beat","reason":"..."}' | uv run autoswing log-skip -`
    Categories: low_quality_beat, sold_off, stop_geometry, liquidity,
    capacity, already_moved, other. This measures whether your judgment
    beats the raw scanner — log honestly, including skips you're unsure of.
-7. `journal-note` digest: what you proposed and why, what you skipped and
-   why (one line each), gate outcomes, shadow entries taken.
+8. `journal-note` digest: what you proposed and why, what you skipped and
+   why (one line each), gate outcomes, shadow entries taken (wide + v2
+   counts).
 
 ### midday (~12:30 ET)
 1. `gate-status`, `get-positions`, `manage-positions` (report mode), and
@@ -151,8 +164,9 @@ You will be told which window this run is. Do that window's checklist only.
    two days in a row = drift exhausted -> reasonable to exit early; note it
    for tomorrow or exit now if clearly dead).
 3. `benchmark-mark` — record the daily equity vs VOO mark.
-3b. `shadow-mark` — close out virtual v2 positions that hit stop/target/
-   timebox; mention any shadow closes (with virtual P&L) in the digest.
+3b. `shadow-mark` — close out virtual positions (both v2 and wide-PEAD
+   books) that hit stop/target/timebox; mention any shadow closes (with
+   virtual P&L, per book) in the digest.
 3c. `forecast-score` — score pending predictions whose prints are in;
    mention fresh scores (right/wrong, both tiers) in the digest.
 4. `recent-fills` — reconcile every execution today (entries, stops,
