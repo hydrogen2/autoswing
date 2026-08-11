@@ -50,6 +50,55 @@ ledger ≈ this skeleton live; live book = skeleton + judgment + capacity.
 If the judgment layer can't lift +0.055R meaningfully, PEAD v1 doesn't
 clear the mission's 13–15% bar on its own.
 
-Cheap next step when wanted: parameter sensitivity sweep over the cached
-data (minutes per variant now) — e.g. move floor 3–8%, drift tolerance,
-timebox length — reading it as robustness check, not optimization.
+## Parameter sensitivity sweep (run 2026-08-11, state/backtest/sweep-2023-2025.json)
+
+18 variants, one factor at a time around the baseline, same 3-year window.
+Read as robustness check; with 18 tries, the best t-stats (~2.4) are about
+what the null predicts for the winner of 18 draws — do not treat any single
+cell as significant.
+
+| variant | n | avg R | t | total R | maxDD R | 2023 R |
+|---------------|------|--------|------|-------|-----|-------|
+| baseline | 1612 | +0.055 | 1.76 | 87.9 | 145 | −52.1 |
+| min_move=3 | 2088 | +0.040 | 1.48 | 84.4 | 190 | −70.4 |
+| min_move=4 | 1863 | +0.038 | 1.32 | 70.5 | 170 | −66.6 |
+| min_move=6 | 1374 | +0.080 | 2.38 | 109.9 | 116 | −29.9 |
+| min_move=8 | 977 | +0.073 | 1.82 | 70.8 | 76 | −9.2 |
+| min_vol=1.5 | 1871 | +0.070 | 2.45 | 131.5 | 153 | −58.4 |
+| min_vol=2.5 | 1290 | +0.050 | 1.44 | 63.8 | 110 | −34.3 |
+| min_vol=3.0 | 927 | +0.065 | 1.59 | 60.5 | 69 | −21.6 |
+| surprise=7.5 | 1444 | +0.070 | 2.13 | 100.9 | 121 | −42.2 |
+| surprise=10 | 1290 | +0.054 | 1.56 | 69.4 | 122 | −56.3 |
+| surprise=15 | 1029 | +0.027 | 0.69 | 27.6 | 98 | −50.5 |
+| stop_cap=5 | 931 | +0.007 | 0.16 | 6.4 | 99 | −52.1 |
+| stop_cap=6 | 1167 | +0.046 | 1.21 | 53.6 | 116 | −44.1 |
+| stop_cap=10 | 1913 | +0.058 | 2.11 | 110.4 | 159 | −40.0 |
+| pullback=1 | 1448 | +0.048 | 1.48 | 69.1 | 126 | −46.8 |
+| pullback=5 | 1675 | +0.043 | 1.43 | 72.6 | 155 | −65.5 |
+| hold=10 | 1612 | +0.033 | 1.13 | 53.1 | 115 | −33.4 |
+| hold=20 | 1612 | +0.059 | 1.85 | 95.0 | 137 | −37.7 |
+
+Takeaways:
+1. **Sign-robust, size-thin, everywhere.** All 18 variants have positive
+   avg R (+0.007 to +0.080). The baseline is not a fragile peak — it sits
+   mid-plateau. There is no parameter setting that turns this skeleton
+   into a strong strategy, and none that kills it either.
+2. **The one strong, monotone dial is stop geometry.** Tightening the stop
+   cap to 5% collapses the edge to +0.007R (t=0.16) — tight stops convert
+   drift trades into coin flips. The playbook's AEIS rule (stop set by the
+   instrument, never tightened) is empirically re-validated a third way.
+3. **Weak reactions are the drag.** Lowering the move floor to 3–4% adds
+   trades and subtracts money; raising it to 6–8% improves every metric
+   (avg R, drawdown, 2023 damage). In-sample, so a hypothesis, not a
+   ruling — the wide ledger records reaction_move per trade and can test
+   it forward before any live change.
+4. **Bigger surprises don't help** past ~7.5% (surprise=15 is the second-
+   worst cell), and the volume dial is non-monotone (1.5x best, 2.5x
+   worst, 3.0x fine) — i.e. noise; leave it alone.
+5. **Nothing fixes 2023.** Every variant loses that year; the best
+   (min_move=8, −9R) merely refuses to trade. The chop-regime problem is
+   structural, not parametric — regime awareness is judgment-layer work.
+
+No live parameter changes from this sweep: in-sample selection off 18
+variants is exactly how strategies get overfit. The move-floor hypothesis
+(#3) goes to the wide ledger for forward validation.
