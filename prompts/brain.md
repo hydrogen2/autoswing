@@ -90,6 +90,11 @@ You will be told which window this run is. Do that window's checklist only.
    JSON fields: symbol, report_date, timing (bmo/amc/unknown), tier,
    eps_call (beat/miss/inline), reaction_call (up/down), confidence
    (0.5-1.0, honest — calibration is scored), reasoning.
+   GRADING BASIS: eps_call means beat/miss/inline vs the consensus number
+   shown by `scan-upcoming` — the scorer grades against that same figure,
+   so anchor the call to it even when live street numbers differ (CSCO
+   2026-08-10: street $1.17 vs scan consensus $0.99). Use live street
+   color for the reaction_call leg only.
    Forecasts are IMMUTABLE — first call stands, no revisions. If the run
    is running long, cut the quick tier first, then deep. Never let
    forecasting delay position management or the PEAD shortlist.
@@ -99,12 +104,16 @@ You will be told which window this run is. Do that window's checklist only.
 
 ### entry (~10:00 ET, market open)
 1. `gate-status` — if kill_tripped: journal-note, STOP.
-2. `scan-candidates --days-back 3` for fresh reaction data.
-3. For each candidate you judge quality (max 2 new entries per day):
+2. `recent-fills` — stops can execute between 9:30 and now (MSI,
+   2026-08-10). Report any fill since the last window in the digest with
+   its realized P&L, and treat the freed capital as available when sizing
+   today's entries. Closed trades must never vanish silently.
+3. `scan-candidates --days-back 3` for fresh reaction data.
+4. For each candidate you judge quality (max 2 new entries per day):
    `next-earnings <SYM>`, then build the proposal JSON per the sizing
    rules and submit: `echo '<json>' | uv run autoswing propose-trade -`.
    Include a rationale field with the thesis in one or two sentences.
-4. V2 SHADOW (after PEAD work; skip entirely if time is short — PEAD always
+5. V2 SHADOW (after PEAD work; skip entirely if time is short — PEAD always
    has priority). Run `scan-movers`. Pick up to 2 quality catalyst
    candidates: identify the ACTUAL catalyst via WebSearch (FDA decision,
    M&A fallout, guidance change, contract win, major upgrade — one clean
@@ -115,13 +124,13 @@ You will be told which window this run is. Do that window's checklist only.
    VIRTUAL position only — shadow never places real orders. One-line
    thesis per shadow entry in the digest; also note quality names you
    passed on and why.
-5. SKIP LEDGER: for every candidate you seriously considered and rejected
+6. SKIP LEDGER: for every candidate you seriously considered and rejected
    (max ~6/day), log it structurally:
    `echo '{"symbol":"X","category":"low_quality_beat","reason":"..."}' | uv run autoswing log-skip -`
    Categories: low_quality_beat, sold_off, stop_geometry, liquidity,
    capacity, already_moved, other. This measures whether your judgment
    beats the raw scanner — log honestly, including skips you're unsure of.
-6. `journal-note` digest: what you proposed and why, what you skipped and
+7. `journal-note` digest: what you proposed and why, what you skipped and
    why (one line each), gate outcomes, shadow entries taken.
 
 ### midday (~12:30 ET)
