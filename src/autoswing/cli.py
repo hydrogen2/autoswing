@@ -174,6 +174,22 @@ def main() -> None:
         help="research: what skipped candidates did next, by skip category",
     )
 
+    bt = sub.add_parser(
+        "backtest",
+        help="research: replay the mechanical PEAD skeleton over historical "
+        "earnings (heavy on first run; caches to state/backtest). Results "
+        "carry survivorship/timing/judgment caveats — never quote as "
+        "expected live performance.",
+    )
+    bt.add_argument("--start", required=True, help="YYYY-MM-DD")
+    bt.add_argument("--end", required=True, help="YYYY-MM-DD")
+    bt.add_argument("--min-move", type=float, default=None,
+                    help="reaction move floor, pct (default 5.0)")
+    bt.add_argument("--min-volume-ratio", type=float, default=None,
+                    help="reaction volume ratio floor (default 2.0)")
+    bt.add_argument("--min-surprise", type=float, default=None,
+                    help="EPS surprise floor, pct (default 5.0)")
+
     args = parser.parse_args()
     config = load_config()
     journal = Journal(config.journal_dir)
@@ -185,7 +201,8 @@ def main() -> None:
         elif args.command in ("scan-candidates", "next-earnings", "scan-movers",
                               "shadow-mark", "shadow-status", "scan-upcoming",
                               "forecast-log", "forecast-score", "forecast-stats",
-                              "exit-counterfactuals", "log-skip", "skip-outcomes"):
+                              "exit-counterfactuals", "log-skip", "skip-outcomes",
+                              "backtest"):
             result = _dispatch_data(config, journal, args)
         else:
             with Broker(config, journal) as broker:
@@ -208,7 +225,10 @@ def _arm_watchdog(journal: Journal, command: str) -> None:
     import os
     import signal
 
-    limit = int(os.environ.get("AUTOSWING_CMD_TIMEOUT", "180"))
+    # backtest legitimately runs long on a cold cache (~1 calendar request
+    # per trading day + price cohorts); everything else keeps the tight wall.
+    default = "3600" if command == "backtest" else "180"
+    limit = int(os.environ.get("AUTOSWING_CMD_TIMEOUT", default))
 
     def _die(signum, frame):
         try:
@@ -681,6 +701,8 @@ def _dispatch_data(config, journal: Journal, args):
         return comparison
     if args.command == "log-skip":
         return _log_skip(args, journal)
+    if args.command == "backtest":
+        return _backtest(config, journal, args)
     if args.command == "skip-outcomes":
         from .config import PROJECT_ROOT
         from .data.prices import fetch_history
@@ -697,6 +719,36 @@ def _dispatch_data(config, journal: Journal, args):
                        pending=result["pending"])
         return result
     raise ValueError(f"unknown data command {args.command!r}")
+
+
+def _backtest(config, journal: Journal, args):
+    from datetime import date
+
+    from .backtest import run_backtest
+    from .config import PROJECT_ROOT
+
+    overrides = {}
+    if args.min_move is not None:
+        overrides["min_move_pct"] = args.min_move
+    if args.min_volume_ratio is not None:
+        overrides["min_volume_ratio"] = args.min_volume_ratio
+    if args.min_surprise is not None:
+        overrides["min_surprise_pct"] = args.min_surprise
+
+    result = run_backtest(
+        date.fromisoformat(args.start), date.fromisoformat(args.end),
+        config.risk, PROJECT_ROOT / "state" / "backtest", overrides,
+    )
+    out = PROJECT_ROOT / "state" / "backtest" / (
+        f"results-{args.start}-{args.end}.json")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(result, indent=2))
+    journal.record("research.backtest", range=result["range"],
+                   params=result["params"], funnel=result["funnel"],
+                   overall=result["overall"], by_year=result["by_year"])
+    # full per-trade detail lives in the results file, not stdout
+    return {k: v for k, v in result.items() if k != "trades"} | {
+        "results_file": str(out)}
 
 
 def _log_skip(args, journal: Journal):
