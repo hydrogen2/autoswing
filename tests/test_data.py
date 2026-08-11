@@ -18,6 +18,12 @@ class TestMoneyParsing:
     def test_negative_parens(self):
         assert _money("($0.30)") == -0.30
 
+    def test_negative_minus_sign(self):
+        # Nasdaq also emits bare-minus negatives (ECOR 2023-08-09 '-$1.00');
+        # losing the sign flips a loss estimate into a positive denominator.
+        assert _money("-$1.00") == -1.00
+        assert _money(" -$0.42") == -0.42
+
     def test_thousands(self):
         assert _money("$3,182,376,227") == 3182376227.0
 

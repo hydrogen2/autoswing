@@ -40,10 +40,14 @@ class Report:
 
 
 def _money(s: str | None) -> float | None:
-    """'$0.71' / '($0.30)' / '$3,182,376,227' -> float; '' -> None."""
+    """'$0.71' / '($0.30)' / '-$1.00' / '$3,182,376,227' -> float; '' -> None.
+
+    Nasdaq formats negatives BOTH ways: parens in most rows, but a bare
+    minus in some (ECOR 2023-08-09 forecast '-$1.00' parsed as +1.0 until
+    2026-08-11, flipping a loss estimate into a beat denominator)."""
     if not s:
         return None
-    neg = "(" in s
+    neg = "(" in s or s.lstrip().startswith("-")
     cleaned = re.sub(r"[^0-9.]", "", s)
     if not cleaned:
         return None
