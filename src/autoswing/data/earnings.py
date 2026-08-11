@@ -91,14 +91,19 @@ def parse_calendar_rows(rows: list[dict], day: date) -> list[Report]:
     return reports
 
 
-def fetch_calendar_day(day: date, session: requests.Session | None = None) -> list[Report]:
+def fetch_calendar_rows(day: date, session: requests.Session | None = None) -> list[dict]:
+    """Raw calendar rows for one day, unparsed. The backtest caches these
+    verbatim so parser fixes apply retroactively on reread."""
     s = session or requests.Session()
     resp = s.get(
         NASDAQ_URL, params={"date": day.isoformat()}, headers=HEADERS, timeout=20
     )
     resp.raise_for_status()
-    rows = ((resp.json().get("data") or {}).get("rows")) or []
-    return parse_calendar_rows(rows, day)
+    return ((resp.json().get("data") or {}).get("rows")) or []
+
+
+def fetch_calendar_day(day: date, session: requests.Session | None = None) -> list[Report]:
+    return parse_calendar_rows(fetch_calendar_rows(day, session), day)
 
 
 def recent_reporters(days_back: int, today: date | None = None) -> list[Report]:

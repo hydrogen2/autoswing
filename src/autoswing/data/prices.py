@@ -26,15 +26,16 @@ class Reaction:
     days_since_reaction: int  # trading days
 
 
-def _download_batch(symbols: list[str], period: str) -> dict[str, pd.DataFrame]:
+def _download_batch(symbols: list[str], **window) -> dict[str, pd.DataFrame]:
+    """window: either period="3mo" or start=/end= ISO dates (yf.download kwargs)."""
     import yfinance as yf
 
     # Yahoo spells share classes with dashes (BRK.B -> BRK-B); translate for
     # the fetch, key results by the caller's original symbol.
     yahoo = {sym: sym.replace(".", "-") for sym in symbols}
     data = yf.download(
-        list(yahoo.values()), period=period, group_by="ticker",
-        auto_adjust=True, threads=True, progress=False,
+        list(yahoo.values()), group_by="ticker",
+        auto_adjust=True, threads=True, progress=False, **window,
     )
     out = {}
     for sym in symbols:
@@ -54,7 +55,7 @@ def _download_batch(symbols: list[str], period: str) -> dict[str, pd.DataFrame]:
 _RETRY_MAX_MISSING_FRACTION = 0.25
 
 
-def fetch_history(symbols: list[str], period: str = "3mo") -> dict[str, pd.DataFrame]:
+def _fetch_with_retry(symbols: list[str], **window) -> dict[str, pd.DataFrame]:
     """Batch-download OHLCV per symbol. Missing/empty symbols are dropped.
 
     The batch download drops a varying handful of symbols per call, so a
@@ -64,11 +65,22 @@ def fetch_history(symbols: list[str], period: str = "3mo") -> dict[str, pd.DataF
     """
     if not symbols:
         return {}
-    out = _download_batch(symbols, period)
+    out = _download_batch(symbols, **window)
     missing = [s for s in symbols if s not in out]
     if missing and len(missing) <= _RETRY_MAX_MISSING_FRACTION * len(symbols):
-        out.update(_download_batch(missing, period))
+        out.update(_download_batch(missing, **window))
     return out
+
+
+def fetch_history(symbols: list[str], period: str = "3mo") -> dict[str, pd.DataFrame]:
+    """Recent history, relative window ending now (live scans and marks)."""
+    return _fetch_with_retry(symbols, period=period)
+
+
+def fetch_window(symbols: list[str], start, end) -> dict[str, pd.DataFrame]:
+    """Absolute date window (backtest cohorts). start/end: datetime.date."""
+    return _fetch_with_retry(symbols, start=start.isoformat(),
+                             end=end.isoformat())
 
 
 def reaction_metrics(

@@ -32,8 +32,8 @@ from pathlib import Path
 import pandas as pd
 import requests
 
-from .data.earnings import HEADERS, NASDAQ_URL, Report, parse_calendar_rows
-from .data.prices import reaction_metrics
+from .data.earnings import Report, fetch_calendar_rows, parse_calendar_rows
+from .data.prices import fetch_window, reaction_metrics
 from .shadow import WIDE_NOTIONAL, ShadowPosition, mark_position
 
 DEFAULTS = {
@@ -59,18 +59,14 @@ CALENDAR_PACING_S = 0.35
 def cached_calendar_day(
     day: date, cache_dir: Path, session: requests.Session | None = None
 ) -> list[Report]:
-    """Raw calendar rows for one day, cached forever (the record is frozen).
+    """Calendar rows for one day, cached forever (the record is frozen).
     Raw rows are cached rather than parsed Reports so parser fixes apply on
     reread."""
     cache = cache_dir / f"{day.isoformat()}.json"
     if cache.exists():
         rows = json.loads(cache.read_text())
     else:
-        s = session or requests.Session()
-        resp = s.get(NASDAQ_URL, params={"date": day.isoformat()},
-                     headers=HEADERS, timeout=20)
-        resp.raise_for_status()
-        rows = ((resp.json().get("data") or {}).get("rows")) or []
+        rows = fetch_calendar_rows(day, session)
         cache_dir.mkdir(parents=True, exist_ok=True)
         tmp = cache.with_suffix(".tmp")
         tmp.write_text(json.dumps(rows))
@@ -101,27 +97,6 @@ def calendar_prefilter(reports: list[Report], params: dict) -> list[Report]:
 
 # -- prices -------------------------------------------------------------------
 
-def _yahoo_download(symbols: list[str], start: date, end: date) -> dict[str, pd.DataFrame]:
-    import yfinance as yf
-
-    yahoo = {sym: sym.replace(".", "-") for sym in symbols}
-    data = yf.download(
-        list(yahoo.values()), start=start.isoformat(), end=end.isoformat(),
-        group_by="ticker", auto_adjust=True, threads=True, progress=False,
-    )
-    out = {}
-    for sym in symbols:
-        try:
-            df = (data[yahoo[sym]]
-                  if isinstance(data.columns, pd.MultiIndex) else data)
-        except KeyError:
-            continue
-        df = df.dropna(subset=["Close"])
-        if len(df):
-            out[sym] = df
-    return out
-
-
 def cohort_prices(
     day: date, symbols: list[str], cache_dir: Path
 ) -> dict[str, pd.DataFrame]:
@@ -139,7 +114,7 @@ def cohort_prices(
         else:
             missing.append(sym)
     if missing:
-        fetched = _yahoo_download(
+        fetched = fetch_window(
             missing,
             day - timedelta(days=PRICE_LOOKBACK_DAYS),
             day + timedelta(days=PRICE_LOOKFORWARD_DAYS),
