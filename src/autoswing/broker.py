@@ -34,6 +34,22 @@ class Broker:
         self.config = config
         self.journal = journal
         self.ib = IB()
+        # IB pushes notices and real errors over one channel, and a notice
+        # can read like a failure: on 2026-08-12 a filled time-box close
+        # surfaced on stderr as "Cancelled - Error 10349 (TIF set to DAY)"
+        # while the order was in fact filled. Journal every API message so
+        # the structured record — not loose stderr wording — is what gets
+        # cross-checked.
+        self.ib.errorEvent += self._on_api_message
+
+    def _on_api_message(self, reqId, errorCode, errorString, contract) -> None:
+        self.journal.record(
+            "broker.api_message",
+            req_id=reqId,
+            code=errorCode,
+            message=errorString,
+            symbol=contract.symbol if contract is not None else None,
+        )
 
     # -- lifecycle -----------------------------------------------------------
 

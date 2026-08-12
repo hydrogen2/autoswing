@@ -158,3 +158,48 @@ class TestJournal:
         assert entries[0]["foo"] == 1
         assert entries[1]["foo"] == 2
         assert all("ts" in e and "event" in e for e in entries)
+
+
+class TestApiMessageJournal:
+    """IB notices and errors share one event channel; every one must land
+    in the journal as a structured row (2026-08-12: a filled close rendered
+    on stderr as "Cancelled - Error 10349" and could only be disproved by
+    hand — the journal row is the durable cross-check)."""
+
+    def test_error_event_is_journaled_with_contract(self, tmp_path):
+        from types import SimpleNamespace
+
+        from autoswing.broker import Broker
+
+        journal = Journal(tmp_path)
+        broker = Broker(config=_broker_cfg(), journal=journal)
+        broker.ib.errorEvent.emit(
+            151, 10349, "Order Cancelled - Error 10349 (TIF set to DAY)",
+            SimpleNamespace(symbol="MMM"),
+        )
+        rows = [
+            json.loads(line)
+            for f in tmp_path.glob("*.jsonl")
+            for line in f.read_text().strip().splitlines()
+        ]
+        msgs = [r for r in rows if r["event"] == "broker.api_message"]
+        assert len(msgs) == 1
+        assert msgs[0]["req_id"] == 151
+        assert msgs[0]["code"] == 10349
+        assert "TIF set to DAY" in msgs[0]["message"]
+        assert msgs[0]["symbol"] == "MMM"
+
+    def test_error_event_without_contract(self, tmp_path):
+        from autoswing.broker import Broker
+
+        journal = Journal(tmp_path)
+        broker = Broker(config=_broker_cfg(), journal=journal)
+        broker.ib.errorEvent.emit(1, 202, "Order cancelled", None)
+        rows = [
+            json.loads(line)
+            for f in tmp_path.glob("*.jsonl")
+            for line in f.read_text().strip().splitlines()
+        ]
+        msgs = [r for r in rows if r["event"] == "broker.api_message"]
+        assert len(msgs) == 1
+        assert msgs[0]["symbol"] is None
