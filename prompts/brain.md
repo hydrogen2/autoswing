@@ -50,6 +50,9 @@ outcome. Never trade to be busy.
 ## Sizing a proposal
 
 From `gate-status` take virtual_equity. Then:
+- action = "BUY" (required field in the proposal JSON; long-only, and
+  omitting it costs a rejected proposal — this was a daily stumble
+  through 2026-08-11)
 - risk budget = 1% of virtual equity (e.g. $500 on $50k)
 - entry_limit = near last price (limit, never chase more than ~0.5% above)
 - stop_loss = below the reaction-day low, or entry - ~1x the stock's recent
