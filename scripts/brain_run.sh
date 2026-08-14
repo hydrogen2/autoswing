@@ -9,6 +9,12 @@ LOGDIR="$REPO/state/brain/logs"
 LOCK=/tmp/autoswing-brain.lock
 export PATH="$HOME/.local/bin:$PATH"
 
+# Headless auth: long-lived token from .secrets.env. Interactive OAuth
+# sessions expire (2026-08-13: manager run died on exactly that); the env
+# token takes precedence and outlives them.
+TOKEN=$(grep -E '^CLAUDE_CODE_OAUTH_TOKEN=' "$REPO/.secrets.env" 2>/dev/null | cut -d= -f2- || true)
+[ -n "$TOKEN" ] && export CLAUDE_CODE_OAUTH_TOKEN="$TOKEN"
+
 mkdir -p "$LOGDIR"
 LOG="$LOGDIR/$(date +%F)-$WINDOW.log"
 
