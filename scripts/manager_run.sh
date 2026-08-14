@@ -34,13 +34,37 @@ if ! flock -w 600 9; then
 fi
 
 cd "$REPO"
+REPORT_FILE="$REPO/state/reports/$(date -u +%F).md"
+STAMP=$(mktemp /tmp/autoswing-manager-stamp.XXXXXX)
+
 {
   echo "=== $(date -Is) manager run ==="
+  # `|| echo` keeps set -e from silently aborting the script on a claude
+  # failure — on 2026-08-13 an expired OAuth session died here with no
+  # alert, and the missing report was the only signal.
   timeout --kill-after=60 3600 claude -p "$(cat prompts/manager.md)
 
 TODAY (UTC): $(date -u +%F). Review this trading day." \
     --settings config/manager-settings.json \
     --max-turns 80 \
-    --output-format text
-  echo "=== $(date -Is) done (exit $?) ==="
+    --output-format text || echo "claude exited nonzero: $?"
+  echo "=== $(date -Is) done ==="
 } >>"$LOG" 2>&1
+
+# Dead-man check: a successful review leaves today's report, freshly
+# written. Anything else (auth expiry, crash, empty run) must be as loud
+# as the lock-blocked path above.
+if [ ! -f "$REPORT_FILE" ] || [ ! "$REPORT_FILE" -nt "$STAMP" ]; then
+  ALERT="$REPO/state/reports/$(date -u +%F)-FAILED.md"
+  {
+    echo "MANAGER FAILED: the run finished without writing today's report."
+    echo "No daily review was delivered. Log tail ($LOG):"
+    echo
+    tail -n 15 "$LOG"
+  } > "$ALERT"
+  uv run python scripts/send_report.py \
+    --subject "autoswing ALERT: manager run produced no report" \
+    --body-file "$ALERT" >>"$LOG" 2>&1 \
+    || echo "$(date -Is) alert email FAILED too — see $ALERT" >>"$LOG"
+fi
+rm -f "$STAMP"
