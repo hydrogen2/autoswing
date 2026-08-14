@@ -42,14 +42,50 @@ fi
 cd "$REPO"
 # Lets window-scoped commands (benchmark-mark: preclose-only) self-enforce.
 export AUTOSWING_WINDOW="$WINDOW"
+OK=0
 {
   echo "=== $(date -Is) brain window: $WINDOW ==="
-  # Wall-clock cap: a hung run must never hold the lock into later windows.
-  timeout --kill-after=60 2400 claude -p "$(cat prompts/brain.md)
+  # Transient API failures get up to 3 attempts (2026-08-13: a 1-second
+  # "529 Overloaded" killed the entry window via set -e — no retry, no
+  # alert). Only FAST failures retry: a run that died after >=120s may
+  # have already done real work, and a retry chain would hold the shared
+  # lock into the hourly healthcheck or the next window. Wall-clock cap
+  # per attempt: a hung run must never hold the lock into later windows.
+  for attempt in 1 2 3; do
+    ATTEMPT_START=$SECONDS
+    if timeout --kill-after=60 2400 claude -p "$(cat prompts/brain.md)
 
 TODAY'S RUN WINDOW: $WINDOW" \
-    --settings config/brain-settings.json \
-    --max-turns 60 \
-    --output-format text
-  echo "=== $(date -Is) done (exit $?) ==="
+      --settings config/brain-settings.json \
+      --max-turns 60 \
+      --output-format text; then
+      OK=1
+      break
+    else
+      RC=$?
+    fi
+    DUR=$((SECONDS - ATTEMPT_START))
+    echo "$(date -Is) attempt $attempt failed (exit $RC after ${DUR}s)"
+    if [ "$DUR" -ge 120 ] || [ "$attempt" -eq 3 ]; then
+      break
+    fi
+    sleep 300
+  done
+  echo "=== $(date -Is) done (ok=$OK) ==="
 } >>"$LOG" 2>&1
+
+# Dead window = lost trading decisions; must be as loud as a manager miss.
+if [ "$OK" -ne 1 ]; then
+  ALERT=$(mktemp /tmp/autoswing-window-alert.XXXXXX)
+  {
+    echo "BRAIN WINDOW FAILED: $WINDOW on $(date -u +%F) — attempts exhausted."
+    echo "This window's checklist never completed. Log tail ($LOG):"
+    echo
+    tail -n 15 "$LOG"
+  } > "$ALERT"
+  uv run python scripts/send_report.py \
+    --subject "autoswing ALERT: $WINDOW brain window failed" \
+    --body-file "$ALERT" >>"$LOG" 2>&1 \
+    || echo "$(date -Is) alert email FAILED too" >>"$LOG"
+  rm -f "$ALERT"
+fi
