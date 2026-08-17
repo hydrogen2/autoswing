@@ -20,7 +20,7 @@ DATA_COMMANDS = (
     "shadow-mark", "shadow-status", "scan-upcoming",
     "forecast-log", "forecast-score", "forecast-stats",
     "exit-counterfactuals", "log-skip", "skip-outcomes",
-    "backtest",
+    "backtest", "lesson-pending", "lesson-log", "lessons",
 )
 
 
@@ -200,6 +200,24 @@ def _build_parser() -> argparse.ArgumentParser:
                     help="reaction volume ratio floor (default 2.0)")
     bt.add_argument("--min-surprise", type=float, default=None,
                     help="EPS surprise floor, pct (default 5.0)")
+
+    sub.add_parser(
+        "lesson-pending",
+        help="reflection memory: closed trades with no lesson yet, with "
+        "realized R / return / alpha vs benchmark (preclose task)",
+    )
+    ll = sub.add_parser(
+        "lesson-log",
+        help="reflection memory: record an immutable 2-4 sentence lesson "
+        "for a closed trade (JSON: symbol, closed_date, thesis_held, lesson)",
+    )
+    ll.add_argument("lesson", help="lesson JSON path, or '-' for stdin")
+    lz = sub.add_parser(
+        "lessons",
+        help="reflection memory: past lessons formatted for the entry window "
+        "(same-symbol first when --symbol given)",
+    )
+    lz.add_argument("--symbol", default=None)
 
     return parser
 

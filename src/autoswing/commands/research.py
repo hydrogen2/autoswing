@@ -71,6 +71,17 @@ def _dispatch_data(config, journal: Journal, args):
         return _log_skip(args, journal)
     if args.command == "backtest":
         return _backtest(config, journal, args)
+    if args.command == "lesson-pending":
+        return _lesson_pending(config, journal)
+    if args.command == "lesson-log":
+        return _lesson_log(args, journal)
+    if args.command == "lessons":
+        from ..lessons import lessons_context, load_lessons
+
+        lessons = load_lessons(_lessons_path())
+        return {"count": len(lessons),
+                "context": lessons_context(lessons, args.symbol),
+                "lessons": lessons[-20:]}
     if args.command == "skip-outcomes":
         from ..config import PROJECT_ROOT
         from ..data.prices import fetch_history
@@ -117,6 +128,94 @@ def _backtest(config, journal: Journal, args):
     # full per-trade detail lives in the results file, not stdout
     return {k: v for k, v in result.items() if k != "trades"} | {
         "results_file": str(out)}
+
+
+def _lessons_path():
+    from ..config import PROJECT_ROOT
+    return PROJECT_ROOT / "state" / "research" / "lessons.jsonl"
+
+
+def _lesson_pending(config, journal: Journal):
+    """Closed trades awaiting a reflection, with realized outcome numbers.
+    Deterministic; the brain writes the lesson text via lesson-log."""
+    from datetime import date
+
+    from ..config import PROJECT_ROOT
+    from ..data.prices import fetch_history
+    from ..lessons import extract_closed_trades, load_lessons, outcome
+
+    done = {l["id"] for l in load_lessons(_lessons_path())}
+    closed = [t for t in extract_closed_trades(PROJECT_ROOT / "journal")
+              if t.id not in done]
+    if not closed:
+        return {"pending": []}
+
+    bench = config.strategy.get("benchmark_symbol", "VOO")
+    hist = fetch_history([bench], period="6mo").get(bench)
+
+    def bench_close(d: str):
+        if hist is None:
+            return None
+        day = date.fromisoformat(d)
+        rows = hist[[ts.date() <= day for ts in hist.index]]
+        return float(rows["Close"].iloc[-1]) if len(rows) else None
+
+    pending = []
+    for t in closed:
+        pending.append({
+            "id": t.id, "symbol": t.symbol, "strategy": t.strategy,
+            "placed_date": t.placed_date, "closed_date": t.closed_date,
+            "entry_limit": t.entry_limit, "stop_loss": t.stop_loss,
+            "take_profit": t.take_profit, "thesis": t.rationale,
+            **outcome(t, bench_close(t.placed_date), bench_close(t.closed_date)),
+        })
+    journal.record("lessons.pending", count=len(pending),
+                   ids=[p["id"] for p in pending])
+    return {"pending": pending}
+
+
+def _lesson_log(args, journal: Journal):
+    from datetime import datetime, timezone
+
+    from ..config import PROJECT_ROOT
+    from ..forecast import append_jsonl
+    from ..lessons import (
+        extract_closed_trades, load_lessons, outcome, validate_lesson,
+    )
+
+    raw = sys.stdin.read() if args.lesson == "-" else open(args.lesson).read()
+    payload = json.loads(raw)
+    errs = validate_lesson(payload)
+    if errs:
+        raise ValueError("invalid lesson: " + "; ".join(errs))
+
+    sym = payload["symbol"].upper()
+    closed = {t.id: t for t in extract_closed_trades(PROJECT_ROOT / "journal")}
+    matches = [t for t in closed.values()
+               if t.symbol == sym and t.closed_date == payload["closed_date"]]
+    if not matches:
+        raise ValueError(
+            f"no closed {sym} trade on {payload['closed_date']} in the journal "
+            "— lessons must anchor to a real close (see lesson-pending)")
+    t = matches[0]
+    if any(l["id"] == t.id for l in load_lessons(_lessons_path())):
+        raise ValueError(f"lesson for {t.id} already exists — lessons are "
+                         "immutable, the first call stands")
+
+    o = outcome(t, None, None)
+    entry = {
+        "id": t.id, "symbol": sym, "strategy": t.strategy,
+        "placed_date": t.placed_date, "closed_date": t.closed_date,
+        "exit_kind": t.exit_kind, "r_multiple": o["r_multiple"],
+        "return_pct": o["return_pct"],
+        "alpha_pct": payload.get("alpha_pct"),
+        "thesis_held": payload["thesis_held"],
+        "lesson": payload["lesson"].strip(),
+        "logged_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    }
+    append_jsonl(_lessons_path(), entry)
+    journal.record("lessons.logged", **entry)
+    return {"logged": t.id, "thesis_held": entry["thesis_held"]}
 
 
 def _log_skip(args, journal: Journal):

@@ -112,9 +112,17 @@ You will be told which window this run is. Do that window's checklist only.
    its realized P&L, and treat the freed capital as available when sizing
    today's entries. Closed trades must never vanish silently.
 3. `scan-candidates --days-back 3` for fresh reaction data.
+3b. `lessons` — your own reflections on past closed trades (you have no
+   memory between windows; this is it). Read them before judging
+   candidates. For any candidate you're serious about, `lessons --symbol
+   <SYM>` surfaces same-name history first. Lessons inform judgment;
+   they never override the playbook rules or the gate.
 4. For each candidate you judge quality (max 2 new entries per day):
-   `next-earnings <SYM>`, then build the proposal JSON per the sizing
-   rules and submit: `echo '<json>' | uv run autoswing propose-trade -`.
+   `next-earnings <SYM>`, then — BEFORE building the proposal — write the
+   strongest one-paragraph bear case for this name in your head (what
+   would make this beat fail to drift?). If you cannot refute it in a
+   sentence, log-skip it instead. Then build the proposal JSON per the
+   sizing rules and submit: `echo '<json>' | uv run autoswing propose-trade -`.
    Include a rationale field with the thesis in one or two sentences.
 5. WIDE-PEAD LEDGER (measurement only — accrues strategy-edge sample size
    decoupled from capital). For EVERY candidate that passed your quality
@@ -175,6 +183,16 @@ You will be told which window this run is. Do that window's checklist only.
 4. `recent-fills` — reconcile every execution today (entries, stops,
    targets) so the digest accounts for each closed trade with its realized
    P&L and a one-line verdict on the trade's quality.
+4b. REFLECTION: `lesson-pending` lists closed trades with no lesson yet,
+   each with its original thesis and the realized outcome (exit kind, R,
+   return, alpha vs VOO). For EACH one, write a lesson and log it:
+   `echo '{"symbol":"X","closed_date":"YYYY-MM-DD","thesis_held":"held|failed|mixed|unclear","lesson":"..."}' | uv run autoswing lesson-log -`
+   The lesson is 2-4 plain sentences, <= 600 chars: (a) was the thesis
+   right, citing the outcome numbers; (b) which part held or failed;
+   (c) ONE concrete thing to do differently (or keep doing) next time.
+   Terse and specific — future entry windows re-read every word. Lessons
+   are immutable; the first call stands. Skip nothing: a lesson from a
+   time-boxed winner is worth as much as one from a stop-out.
 5. `journal-note` the end-of-day digest: equity, open positions with P&L
    direction, every trade closed today (realized P&L and why it closed),
    tomorrow's watch items.
