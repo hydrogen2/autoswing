@@ -37,7 +37,9 @@ def _dispatch(broker: Broker, args):
         return _propose_trade(broker, args)
     if args.command == "gate-status":
         gate = _make_gate(broker)
-        return gate.status(broker.account_state())
+        status = gate.status(broker.account_state())
+        status["sizing_caps"] = _sizing_caps(gate.cfg, status["virtual_equity"])
+        return status
     if args.command == "gate-reset":
         if not args.i_am_sure:
             raise ValueError("gate-reset requires --i-am-sure")
@@ -64,6 +66,24 @@ def _dispatch(broker: Broker, args):
 def _meta_path():
     from ..config import PROJECT_ROOT
     return PROJECT_ROOT / "state" / "positions.json"
+
+
+def _sizing_caps(risk_cfg: dict, virtual_equity: float) -> dict:
+    """Today's sizing limits in dollars, computed the same way the gate's
+    evaluate() computes them. The brain sized to a remembered ~15% cap on
+    2026-08-14 (ENS) and 2026-08-17 (HTHT) — both rejected on
+    max_position_size — so gate-status now states the live numbers."""
+    return {
+        "risk_per_trade_pct": float(risk_cfg["risk_per_trade_pct"]),
+        "risk_budget_dollars": round(
+            virtual_equity * float(risk_cfg["risk_per_trade_pct"]) / 100.0, 2),
+        "max_position_pct": float(risk_cfg["max_position_pct"]),
+        "max_position_notional": round(
+            virtual_equity * float(risk_cfg["max_position_pct"]) / 100.0, 2),
+        "max_gross_exposure_pct": float(risk_cfg["max_gross_exposure_pct"]),
+        "max_gross_exposure_dollars": round(
+            virtual_equity * float(risk_cfg["max_gross_exposure_pct"]) / 100.0, 2),
+    }
 
 
 def _make_gate(broker: Broker):
