@@ -96,6 +96,7 @@ def _shadow_mark(config, journal: Journal):
     from ..shadow import load_book, mark_position, save_book
 
     max_hold = int(config.strategy.get("max_hold_days", 15))
+    bench = config.strategy.get("benchmark_symbol", "VOO")
     out = {}
     for label, wide in (("v2", False), ("wide", True)):
         pos_path, ledger_path = _shadow_paths(wide=wide)
@@ -104,7 +105,8 @@ def _shadow_mark(config, journal: Journal):
             out[label] = {"open": 0, "closed_today": []}
             continue
 
-        history = fetch_history(sorted(book), period="3mo")
+        history = fetch_history(sorted(book) + [bench], period="3mo")
+        bench_df = history.get(bench)
         closed = []
         for sym in list(book):
             df = history.get(sym)
@@ -112,6 +114,7 @@ def _shadow_mark(config, journal: Journal):
                 continue  # no data today; try again tomorrow
             event = mark_position(book[sym], df, date.today(), max_hold)
             if event:
+                event["alpha_pct"] = _alpha(event, bench_df)
                 ledger_path.parent.mkdir(parents=True, exist_ok=True)
                 with open(ledger_path, "a") as f:
                     f.write(json.dumps(event) + "\n")
@@ -123,6 +126,28 @@ def _shadow_mark(config, journal: Journal):
         save_book(pos_path, book)
         out[label] = {"open": len(book), "closed_today": closed}
     return out
+
+
+def _alpha(event: dict, bench_df) -> float | None:
+    """Trade return minus benchmark return over the same hold (opened ->
+    closed dates, close-to-close). None when the series is unavailable —
+    a benchmark outage must never fabricate an alpha figure."""
+    from datetime import date
+
+    if bench_df is None or not event.get("entry_price"):
+        return None
+    try:
+        def close_on(d: str):
+            day = date.fromisoformat(d)
+            rows = bench_df[[ts.date() <= day for ts in bench_df.index]]
+            return float(rows["Close"].iloc[-1]) if len(rows) else None
+        b0, b1 = close_on(event["opened"]), close_on(event["closed"])
+        if not b0 or not b1:
+            return None
+        trade_ret = 100 * (event["exit_price"] / event["entry_price"] - 1)
+        return round(trade_ret - 100 * (b1 / b0 - 1), 2)
+    except Exception:
+        return None
 
 
 def _shadow_status():

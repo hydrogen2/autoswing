@@ -73,9 +73,17 @@ class TestMarking:
 class TestLedgerStats:
     def test_stats(self, tmp_path):
         p = tmp_path / "ledger.jsonl"
-        p.write_text('{"pnl": 100.0}\n{"pnl": -40.0}\n{"pnl": 25.5}\n')
+        p.write_text('{"pnl": 100.0, "alpha_pct": 3.0}\n{"pnl": -40.0, "alpha_pct": -1.0}\n'
+                     '{"pnl": 25.5}\n')  # third close predates alpha stamping
         s = ledger_stats(p)
-        assert s == {"closed": 3, "wins": 2, "losses": 1, "total_pnl": 85.5}
+        assert s == {"closed": 3, "wins": 2, "losses": 1, "total_pnl": 85.5,
+                     "avg_alpha_pct": 1.0, "alpha_n": 2}
+
+    def test_stats_no_alpha_rows(self, tmp_path):
+        p = tmp_path / "ledger.jsonl"
+        p.write_text('{"pnl": 10.0}\n')
+        s = ledger_stats(p)
+        assert s["avg_alpha_pct"] is None and s["alpha_n"] == 0
 
     def test_empty(self, tmp_path):
         s = ledger_stats(tmp_path / "none.jsonl")

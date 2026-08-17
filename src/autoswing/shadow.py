@@ -129,6 +129,7 @@ def ledger_stats(ledger_path: Path) -> dict:
         return {"closed": 0, "wins": 0, "losses": 0, "total_pnl": 0.0}
     closed = wins = losses = 0
     total = 0.0
+    alphas = []
     for line in ledger_path.read_text().splitlines():
         if not line.strip():
             continue
@@ -139,5 +140,9 @@ def ledger_stats(ledger_path: Path) -> dict:
             wins += 1
         else:
             losses += 1
+        if isinstance(e.get("alpha_pct"), (int, float)):
+            alphas.append(e["alpha_pct"])
     return {"closed": closed, "wins": wins, "losses": losses,
-            "total_pnl": round(total, 2)}
+            "total_pnl": round(total, 2),
+            "avg_alpha_pct": round(sum(alphas) / len(alphas), 2) if alphas else None,
+            "alpha_n": len(alphas)}

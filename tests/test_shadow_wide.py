@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import pandas as pd
 import pytest
 
-from autoswing.commands.shadow import _shadow_mark, _shadow_paths, _shadow_propose
+from autoswing.commands.shadow import _alpha, _shadow_mark, _shadow_paths, _shadow_propose
 from autoswing.journal import Journal
 from autoswing.risk_gate import AccountState, OpenOrderInfo, PositionInfo
 from autoswing.shadow import CAPACITY_RULES, WIDE_NOTIONAL, load_book
@@ -180,3 +180,36 @@ class TestMarkBothBooks:
         out = _shadow_mark(SimpleNamespace(strategy={}), Journal(tmp_path / "j"))
         assert out == {"v2": {"open": 0, "closed_today": []},
                        "wide": {"open": 0, "closed_today": []}}
+
+
+class TestAlpha:
+    def bench(self):
+        idx = pd.DatetimeIndex(["2026-08-03", "2026-08-04", "2026-08-05", "2026-08-06"])
+        return pd.DataFrame({"Close": [500.0, 505.0, 510.0, 520.0]}, index=idx)
+
+    def test_alpha_is_trade_minus_benchmark_over_hold(self):
+        # trade +10% from 08-03 to 08-05; VOO +2% over the same span
+        ev = {"opened": "2026-08-03", "closed": "2026-08-05",
+              "entry_price": 100.0, "exit_price": 110.0}
+        assert _alpha(ev, self.bench()) == pytest.approx(8.0)
+
+    def test_missing_benchmark_is_none_not_zero(self):
+        ev = {"opened": "2026-08-03", "closed": "2026-08-05",
+              "entry_price": 100.0, "exit_price": 110.0}
+        assert _alpha(ev, None) is None
+
+    def test_mark_stamps_alpha_on_close(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("autoswing.config.PROJECT_ROOT", tmp_path)
+        submit(tmp_path, monkeypatch, empty_account(), wide=True)
+        today = pd.Timestamp.today().normalize()
+        crash = pd.DataFrame([{"Open": 100, "High": 101, "Low": 90, "Close": 91,
+                               "Volume": 1_000_000}], index=pd.DatetimeIndex([today]))
+        bench = pd.DataFrame({"Close": [500.0]}, index=pd.DatetimeIndex([today]))
+        monkeypatch.setattr("autoswing.data.prices.fetch_history",
+                            lambda syms, period: {**{s: crash for s in syms if s != "VOO"},
+                                                  "VOO": bench})
+        out = _shadow_mark(SimpleNamespace(strategy={"max_hold_days": 15}),
+                           Journal(tmp_path / "journal"))
+        [ev] = out["wide"]["closed_today"]
+        # stopped at 97 from entry 100 = -3%; VOO flat same day -> alpha -3
+        assert ev["alpha_pct"] == pytest.approx(-3.0)

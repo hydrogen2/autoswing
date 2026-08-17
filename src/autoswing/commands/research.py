@@ -74,7 +74,7 @@ def _dispatch_data(config, journal: Journal, args):
     if args.command == "lesson-pending":
         return _lesson_pending(config, journal)
     if args.command == "lesson-log":
-        return _lesson_log(args, journal)
+        return _lesson_log(config, args, journal)
     if args.command == "lessons":
         from ..lessons import lessons_context, load_lessons
 
@@ -135,20 +135,12 @@ def _lessons_path():
     return PROJECT_ROOT / "state" / "research" / "lessons.jsonl"
 
 
-def _lesson_pending(config, journal: Journal):
-    """Closed trades awaiting a reflection, with realized outcome numbers.
-    Deterministic; the brain writes the lesson text via lesson-log."""
+def _benchmark_closer(config):
+    """Returns close(date_str) -> benchmark close on/before that date, or
+    None when the series is unavailable. One fetch, reused per call."""
     from datetime import date
 
-    from ..config import PROJECT_ROOT
     from ..data.prices import fetch_history
-    from ..lessons import extract_closed_trades, load_lessons, outcome
-
-    done = {l["id"] for l in load_lessons(_lessons_path())}
-    closed = [t for t in extract_closed_trades(PROJECT_ROOT / "journal")
-              if t.id not in done]
-    if not closed:
-        return {"pending": []}
 
     bench = config.strategy.get("benchmark_symbol", "VOO")
     hist = fetch_history([bench], period="6mo").get(bench)
@@ -160,6 +152,22 @@ def _lesson_pending(config, journal: Journal):
         rows = hist[[ts.date() <= day for ts in hist.index]]
         return float(rows["Close"].iloc[-1]) if len(rows) else None
 
+    return bench_close
+
+
+def _lesson_pending(config, journal: Journal):
+    """Closed trades awaiting a reflection, with realized outcome numbers.
+    Deterministic; the brain writes the lesson text via lesson-log."""
+    from ..config import PROJECT_ROOT
+    from ..lessons import extract_closed_trades, load_lessons, outcome
+
+    done = {l["id"] for l in load_lessons(_lessons_path())}
+    closed = [t for t in extract_closed_trades(PROJECT_ROOT / "journal")
+              if t.id not in done]
+    if not closed:
+        return {"pending": []}
+
+    bench_close = _benchmark_closer(config)
     pending = []
     for t in closed:
         pending.append({
@@ -174,7 +182,7 @@ def _lesson_pending(config, journal: Journal):
     return {"pending": pending}
 
 
-def _lesson_log(args, journal: Journal):
+def _lesson_log(config, args, journal: Journal):
     from datetime import datetime, timezone
 
     from ..config import PROJECT_ROOT
@@ -202,13 +210,16 @@ def _lesson_log(args, journal: Journal):
         raise ValueError(f"lesson for {t.id} already exists — lessons are "
                          "immutable, the first call stands")
 
-    o = outcome(t, None, None)
+    # Outcome numbers are computed here, never copied from the brain's
+    # payload — the ledger must be trustworthy independent of the prose.
+    bench_close = _benchmark_closer(config)
+    o = outcome(t, bench_close(t.placed_date), bench_close(t.closed_date))
     entry = {
         "id": t.id, "symbol": sym, "strategy": t.strategy,
         "placed_date": t.placed_date, "closed_date": t.closed_date,
         "exit_kind": t.exit_kind, "r_multiple": o["r_multiple"],
         "return_pct": o["return_pct"],
-        "alpha_pct": payload.get("alpha_pct"),
+        "alpha_pct": o["alpha_pct"],
         "thesis_held": payload["thesis_held"],
         "lesson": payload["lesson"].strip(),
         "logged_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
