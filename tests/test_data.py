@@ -260,3 +260,53 @@ class TestFetchHistoryRetry:
         out = fetch_history(["A", "B", "C", "D"])
         assert calls == [["A", "B", "C", "D"]]  # no second call
         assert sorted(out) == ["A"]
+
+
+class TestSameDayBmoStaleness:
+    """Family instance #7 (HTHT 2026-08-17): a same-day report that already
+    printed before the open must not read as 'upcoming'."""
+
+    def _resolve(self, known, stamped, now):
+        from autoswing.data.earnings import ET, resolve_next_earnings
+        return resolve_next_earnings(known, stamped, now.replace(tzinfo=ET))
+
+    def test_bmo_already_printed_is_not_upcoming(self):
+        from datetime import date, datetime
+        from autoswing.data.earnings import ET
+        today = date(2026, 8, 17)
+        bmo = datetime(2026, 8, 17, 8, 0, tzinfo=ET)
+        # 10:00 ET entry window: the 08:00 print is behind us -> derive "none"
+        assert self._resolve([today], [bmo], datetime(2026, 8, 17, 10, 0)) == "none"
+
+    def test_bmo_not_yet_printed_stays_upcoming(self):
+        from datetime import date, datetime
+        from autoswing.data.earnings import ET
+        today = date(2026, 8, 17)
+        bmo = datetime(2026, 8, 17, 8, 0, tzinfo=ET)
+        # 07:30 ET premarket: still ahead -> upcoming today (blackout applies)
+        assert self._resolve([today], [bmo], datetime(2026, 8, 17, 7, 30)) == "2026-08-17"
+
+    def test_amc_same_day_stays_upcoming_all_session(self):
+        from datetime import date, datetime
+        from autoswing.data.earnings import ET
+        today = date(2026, 8, 17)
+        amc = datetime(2026, 8, 17, 16, 0, tzinfo=ET)
+        assert self._resolve([today], [amc], datetime(2026, 8, 17, 10, 0)) == "2026-08-17"
+
+    def test_unstamped_same_day_stays_upcoming(self):
+        # no timestamp = can't tell = never guess it's already out
+        from datetime import date, datetime
+        today = date(2026, 8, 17)
+        assert self._resolve([today], [], datetime(2026, 8, 17, 14, 0)) == "2026-08-17"
+
+    def test_reported_bmo_yields_to_real_future_date(self):
+        from datetime import date, datetime
+        from autoswing.data.earnings import ET
+        today = date(2026, 8, 17)
+        bmo = datetime(2026, 8, 17, 8, 0, tzinfo=ET)
+        nxt = date(2026, 11, 16)
+        assert self._resolve([today, nxt], [bmo], datetime(2026, 8, 17, 10, 0)) == "2026-11-16"
+
+    def test_old_report_beyond_30d_is_unknown(self):
+        from datetime import date, datetime
+        assert self._resolve([date(2026, 5, 15)], [], datetime(2026, 8, 17, 10, 0)) == "unknown"

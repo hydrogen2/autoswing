@@ -63,8 +63,14 @@ From `gate-status` take virtual_equity. Then:
   reaction-day low converts a drift trade into a coin flip. Using less than
   the full risk budget is fine; if the chart-correct stop makes the trade
   pointless at the cap-limited share count, SKIP the name.
-- quantity = floor(risk_budget / (entry_limit - stop_loss)), then capped by
-  max position notional — accept the smaller number
+- quantity: `gate-status` returns `sizing_caps` with TODAY'S dollar limits
+  (risk_budget_dollars, max_position_notional). Use those numbers — never a
+  remembered percentage (ENS 08-14 and HTHT 08-17 were both rejected for
+  sizing to a stale ~15% cap; the live cap is what gate-status says):
+    quantity = floor(min(risk_budget_dollars / (entry_limit - stop_loss),
+                         max_position_notional / entry_limit))
+  Whole shares; accept the smaller of the two — the position cap usually
+  binds on expensive names, the risk budget on volatile ones.
 - take_profit = entry + at least 2x (entry - stop_loss)
 - Fill next_earnings_date from `next-earnings <SYM>` output, avg_dollar_volume
   from the scan's adv_dollar_20d.

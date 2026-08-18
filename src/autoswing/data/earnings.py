@@ -9,9 +9,12 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import requests
+
+ET = ZoneInfo("America/New_York")
 
 NASDAQ_URL = "https://api.nasdaq.com/api/calendar/earnings"
 HEADERS = {
@@ -131,9 +134,11 @@ def next_earnings_date(symbol: str) -> str:
     """
     import yfinance as yf
 
-    today = date.today()
+    now_et = datetime.now(ET)
+    today = now_et.date()
     ticker = yf.Ticker(symbol)
     known: list[date] = []
+    stamped: list[datetime] = []   # rows that carry a report time
 
     try:
         known.extend(ticker.calendar.get("Earnings Date") or [])
@@ -142,14 +147,38 @@ def next_earnings_date(symbol: str) -> str:
     try:
         df = ticker.get_earnings_dates(limit=8)
         if df is not None:
-            known.extend(d.date() for d in df.index)
+            for ts in df.index:
+                known.append(ts.date())
+                if getattr(ts, "tzinfo", None) is not None:
+                    stamped.append(ts.to_pydatetime().astimezone(ET))
     except Exception:
         pass
 
-    future = sorted(d for d in known if d >= today)
+    return resolve_next_earnings(known, stamped, now_et)
+
+
+def resolve_next_earnings(known: list[date], stamped: list[datetime],
+                          now_et: datetime) -> str:
+    """Pure decision over the fetched dates (unit-testable without yfinance).
+
+    Same-day BMO staleness (family instance #7, HTHT 2026-08-17): a report
+    dated TODAY that already printed before the open is not "upcoming" —
+    treating it as such trips the earnings blackout on legitimate day-0
+    PEAD entries. Deterministic test: the row's own timestamp is at/before
+    the open and that time has passed. AMC rows stay upcoming until they
+    print; unstamped same-day rows stay upcoming (never guess)."""
+    today = now_et.date()
+    reported_today = {
+        ts.date() for ts in stamped
+        if ts.date() == today
+        and (ts.hour, ts.minute) <= (9, 30)
+        and now_et >= ts
+    }
+
+    future = sorted(d for d in known if d >= today and d not in reported_today)
     if future:
         return future[0].isoformat()
-    past = [d for d in known if d < today]
+    past = [d for d in known if d < today or d in reported_today]
     if past and (today - max(past)).days <= 30:
         return "none"  # just reported; next report is a quarter away
     return "unknown"
