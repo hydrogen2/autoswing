@@ -7,6 +7,13 @@ LOGDIR="$REPO/state/brain/logs"
 LOCK=/tmp/autoswing-brain.lock
 export PATH="$HOME/.local/bin:$PATH"
 
+# Model is PINNED, not inherited. Two reasons: (1) an account-level default
+# change must never silently alter trading behaviour mid-experiment — the
+# lessons / wide-ledger / forecast series are only comparable within a model
+# regime; (2) the owner's interactive /model choice does not reach cron.
+# Changed Sonnet 5 -> Opus 5 on 2026-08-20 (see journal + docs/model-history).
+MODEL="${AUTOSWING_MODEL:-claude-opus-5}"
+
 # Headless auth: long-lived token from .secrets.env. Interactive OAuth
 # sessions expire (2026-08-13: this script died on exactly that); the env
 # token takes precedence and outlives them.
@@ -51,6 +58,7 @@ STAMP=$(mktemp /tmp/autoswing-manager-stamp.XXXXXX)
   timeout --kill-after=60 3600 claude -p "$(cat prompts/manager.md)
 
 TODAY (UTC): $(date -u +%F). Review this trading day." \
+    --model "$MODEL" \
     --settings config/manager-settings.json \
     --max-turns 80 \
     --output-format text || echo "claude exited nonzero: $?"
