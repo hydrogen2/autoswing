@@ -94,6 +94,53 @@ class TestReactionMetrics:
         assert r.days_since_reaction == 0
         assert r.adv_dollar_20d == 100 * 1_000_000
 
+    def test_reaction_bar_still_trading_is_flagged_partial(self):
+        # 2026-08-20: a day-0 BMO reaction measured during the session divides
+        # partial volume by a full-day average. The number is a floor, and it
+        # must say so — an understated ratio is indistinguishable from a
+        # genuine no-conviction move.
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        closes = [100.0] * 25 + [110.0]
+        volumes = [1_000_000] * 25 + [900_000]  # partial: reads as 0.9x
+        df = make_df(closes, None, volumes)
+        report_day = df.index[25].date()
+        midsession = datetime(report_day.year, report_day.month, report_day.day,
+                              10, 5, tzinfo=ZoneInfo("America/New_York"))
+        r = reaction_metrics("T", df, report_day, "bmo", now=midsession)
+        assert r.volume_ratio == 0.9
+        assert r.volume_basis == "partial_session"
+
+    def test_completed_reaction_bar_is_full_session(self):
+        closes = [100.0] * 25 + [110.0]
+        volumes = [1_000_000] * 25 + [5_000_000]
+        df = make_df(closes, None, volumes)
+        report_day = df.index[25].date()
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        after_close = datetime(report_day.year, report_day.month, report_day.day,
+                               16, 30, tzinfo=ZoneInfo("America/New_York"))
+        r = reaction_metrics("T", df, report_day, "bmo", now=after_close)
+        assert r.volume_ratio == 5.0
+        assert r.volume_basis == "full_session"
+
+    def test_prior_day_reaction_unaffected_by_scan_time(self):
+        # Day-1 drift entries (the common PEAD case) read a completed bar, so
+        # an intraday scan must NOT downgrade them to partial.
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        closes = [100.0] * 25 + [110.0, 111.0]
+        df = make_df(closes)
+        report_day = df.index[25].date()
+        today = df.index[26].date()
+        midsession = datetime(today.year, today.month, today.day, 10, 5,
+                              tzinfo=ZoneInfo("America/New_York"))
+        r = reaction_metrics("T", df, report_day, "bmo", now=midsession)
+        assert r.volume_basis == "full_session"
+
     def test_amc_reaction_next_day(self):
         closes = [100.0] * 25 + [100.0, 112.0]
         df = make_df(closes)

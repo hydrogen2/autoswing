@@ -7,9 +7,29 @@ unit-testable with synthetic data; only fetch_history() touches the network.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime, timezone
+from zoneinfo import ZoneInfo
 
 import pandas as pd
+
+ET = ZoneInfo("America/New_York")
+
+FULL_SESSION = "full_session"
+PARTIAL_SESSION = "partial_session"
+
+
+def session_complete(bar_date: date, now: datetime | None = None) -> bool:
+    """Has bar_date's regular session finished?
+
+    A yfinance bar for the current session is cumulative-so-far, not a
+    full day. Dividing that partial volume by a 20-session full-day
+    average understates volume_ratio by however much of the session is
+    left — and it understates it *silently*, as an ordinary low number.
+    """
+    now_et = (now or datetime.now(timezone.utc)).astimezone(ET)
+    if bar_date != now_et.date():
+        return bar_date < now_et.date()
+    return now_et.hour >= 16
 
 
 @dataclass
@@ -24,6 +44,9 @@ class Reaction:
     adv_dollar_20d: float     # avg daily dollar volume, 20 sessions pre-report
     last_close: float
     days_since_reaction: int  # trading days
+    # "partial_session" => volume_ratio is a floor, not a measurement: the
+    # reaction bar is still trading. Never compare it against a volume bar.
+    volume_basis: str = FULL_SESSION
 
 
 def _download_batch(symbols: list[str], **window) -> dict[str, pd.DataFrame]:
@@ -84,7 +107,8 @@ def fetch_window(symbols: list[str], start, end) -> dict[str, pd.DataFrame]:
 
 
 def reaction_metrics(
-    symbol: str, df: pd.DataFrame, report_date: date, timing: str
+    symbol: str, df: pd.DataFrame, report_date: date, timing: str,
+    now: datetime | None = None,
 ) -> Reaction | None:
     """Compute the post-report reaction. Returns None when the reaction
     day isn't in the data yet (e.g. after-close report, market not open)."""
@@ -147,4 +171,6 @@ def reaction_metrics(
         adv_dollar_20d=round(adv_dollar, 0),
         last_close=round(last_close, 4),
         days_since_reaction=len(df) - 1 - idx,
+        volume_basis=(FULL_SESSION if session_complete(dates[idx], now)
+                      else PARTIAL_SESSION),
     )

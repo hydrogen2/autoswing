@@ -8,10 +8,10 @@ this module only finds "something happened here" candidates.
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 from .earnings import recent_reporters
-from .prices import fetch_history
+from .prices import FULL_SESSION, PARTIAL_SESSION, fetch_history, session_complete
 
 
 def _screen_symbols() -> list[str]:
@@ -89,7 +89,8 @@ def apply_earnings_cross_check(row: dict,
 
 def scan_movers(risk_config: dict, min_move_pct: float = 5.0,
                 earnings_exclusion_days: int = 5,
-                today: date | None = None) -> dict:
+                today: date | None = None,
+                now: datetime | None = None) -> dict:
     today = today or date.today()
     floors = {
         "min_adv": float(risk_config["min_avg_dollar_volume"]),
@@ -124,13 +125,27 @@ def scan_movers(risk_config: dict, min_move_pct: float = 5.0,
             pre = df.iloc[-21:-1]
             avg_vol = float(pre["Volume"].mean())
             adv = float((pre["Close"] * pre["Volume"]).mean())
+            # The last bar is the live session when we scan intraday, so its
+            # volume is only what has traded so far. Reported as a bare ratio
+            # it reads as "no conviction" — 2026-08-20's entry window returned
+            # 18 movers with every volume_ratio under 1.2x, which is not a
+            # quiet tape, it is a partial numerator over a full denominator.
+            complete = session_complete(
+                df.index[-1].date() if hasattr(df.index[-1], "date")
+                else df.index[-1], now)
             row.update({
                 "last_close": round(float(last["Close"]), 4),
                 "move_pct": move_pct,
                 "volume_ratio": round(float(last["Volume"]) / avg_vol, 2)
                 if avg_vol else 0.0,
+                "volume_basis": FULL_SESSION if complete else PARTIAL_SESSION,
                 "adv_dollar_20d": round(adv, 0),
             })
+            if not complete:
+                row["volume_note"] = (
+                    "volume_ratio is a FLOOR — session still trading; "
+                    "a volume-confirmation bar cannot be judged until the close"
+                )
             if move_pct < floors["min_move_pct"]:
                 rejects.append(f"move {move_pct}% < {floors['min_move_pct']}%")
             if adv < floors["min_adv"]:
