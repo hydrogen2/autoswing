@@ -296,14 +296,21 @@ def _forecast_log(args, journal: Journal):
     from datetime import datetime, timezone
 
     from ..forecast import (
-        Forecast, append_jsonl, forecast_id, load_jsonl, validate_forecast,
+        Forecast, append_jsonl, forecast_id, load_jsonl, post_hoc_reason,
+        validate_forecast,
     )
+    from ..risk_gate import ET
 
     raw = sys.stdin.read() if args.forecast == "-" else open(args.forecast).read()
     payload = json.loads(raw)
     errs = validate_forecast(payload)
     if errs:
         raise ValueError("invalid forecast: " + "; ".join(errs))
+
+    stale = post_hoc_reason(payload["report_date"], payload["timing"],
+                            datetime.now(ET))
+    if stale:
+        raise ValueError(f"refusing to log a post-hoc forecast: {stale}")
 
     fpath, _ = _forecast_paths()
     fid = forecast_id(payload["symbol"], payload["report_date"])

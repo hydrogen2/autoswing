@@ -28,6 +28,7 @@ TIERS = ("deep", "quick")
 
 EPS_INLINE_BAND_PCT = 2.0     # |surprise| <= 2% counts as inline
 REACTION_FLAT_BAND_PCT = 1.0  # |move| < 1% counts as flat
+MARKET_CLOSE_ET = (16, 0)
 
 
 @dataclass
@@ -83,6 +84,47 @@ def validate_forecast(payload: dict) -> list[str]:
 
 def forecast_id(symbol: str, report_date: str) -> str:
     return f"{symbol.upper()}-{report_date}"
+
+
+def post_hoc_reason(report_date: str, timing: str, now_et) -> str | None:
+    """Reject a "forecast" for a print that has already happened.
+
+    Staleness family, inverted: the usual bug is treating a past report as
+    upcoming. Here the same ambiguity would let a run transcribe a released
+    number and score it as a prediction, silently inflating the hit rate
+    the whole experiment exists to measure. Nothing would look wrong.
+
+    Deterministic rules, conservative where the release time is unknowable:
+      - report_date in the past: printed, whatever the timing.
+      - same-day BMO: refused outright. Releases land anywhere from 06:00
+        ET (BJ, 2026-08-21 at 06:45) and the premarket window runs at 08:00,
+        so "before the open" does not mean "before this run". Forecast it
+        the day before — which is already the practice.
+      - same-day AMC: legitimate all session; post-hoc from the close.
+      - same-day unknown timing: refused — cannot establish it hasn't printed.
+
+    Returns None when the forecast is genuinely ex ante, else the reason.
+    """
+    from datetime import date
+
+    rd = date.fromisoformat(report_date)
+    today = now_et.date()
+    if rd < today:
+        return (f"report_date {report_date} is in the past — that print is out; "
+                "a forecast logged after it is transcription, not prediction")
+    if rd > today:
+        return None
+    if timing == "bmo":
+        return ("same-day BMO: the release may already be out (they land from "
+                "06:00 ET, before the premarket run) — log BMO forecasts the "
+                "day before the report")
+    if timing == "unknown":
+        return ("same-day report with unknown timing: cannot establish it "
+                "hasn't printed — log it the day before, or set bmo/amc")
+    if (now_et.hour, now_et.minute) >= MARKET_CLOSE_ET:
+        return ("same-day AMC logged at/after the 16:00 ET close — the print "
+                "is either out or imminent")
+    return None
 
 
 def load_jsonl(path: Path) -> list[dict]:

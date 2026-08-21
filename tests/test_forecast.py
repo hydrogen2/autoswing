@@ -6,6 +6,7 @@ from autoswing.forecast import (
     classify_eps,
     classify_reaction,
     compute_stats,
+    post_hoc_reason,
     score_forecast,
     validate_forecast,
 )
@@ -193,3 +194,48 @@ class TestRetiredQuickReactionLeg:
         assert q["eps_n"] == 2 and q["eps_hit_rate"] == 1.0
         # only the forecast that HAD a leg counts toward the reaction rate
         assert q["reaction_n"] == 1 and q["reaction_hit_rate"] == 1.0
+
+
+class TestPostHocGuard:
+    """Look-ahead guard: a "forecast" logged after the print is transcription.
+
+    Regression for the 2026-08-21 finding — PFGC/TRMB/GLBE/AMCR were all
+    logged 2026-08-12 at 08:04 ET for same-day BMO reports, i.e. possibly
+    after the release. They scored badly so no hit rate was inflated, but
+    nothing in the code prevented it.
+    """
+
+    def at(self, s):
+        from datetime import datetime
+        from autoswing.risk_gate import ET
+        return datetime.fromisoformat(s).replace(tzinfo=ET)
+
+    def test_future_report_is_fine(self):
+        assert post_hoc_reason("2026-08-12", "bmo", self.at("2026-08-11T08:04")) is None
+        assert post_hoc_reason("2026-08-12", "amc", self.at("2026-08-11T08:04")) is None
+
+    def test_same_day_bmo_refused(self):
+        # the historical PFGC/TRMB/GLBE/AMCR shape
+        r = post_hoc_reason("2026-08-12", "bmo", self.at("2026-08-12T08:04"))
+        assert r and "BMO" in r
+
+    def test_same_day_bmo_refused_even_before_dawn(self):
+        # releases land from 06:00 ET; "early enough" is not knowable
+        assert post_hoc_reason("2026-08-12", "bmo", self.at("2026-08-12T05:00"))
+
+    def test_same_day_amc_allowed_during_session(self):
+        # CBRS 2026-08-12: same-day AMC logged premarket is a real prediction
+        assert post_hoc_reason("2026-08-12", "amc", self.at("2026-08-12T08:04")) is None
+        assert post_hoc_reason("2026-08-12", "amc", self.at("2026-08-12T15:59")) is None
+
+    def test_same_day_amc_refused_from_the_close(self):
+        assert post_hoc_reason("2026-08-12", "amc", self.at("2026-08-12T16:00"))
+        assert post_hoc_reason("2026-08-12", "amc", self.at("2026-08-12T18:30"))
+
+    def test_same_day_unknown_timing_refused(self):
+        r = post_hoc_reason("2026-08-12", "unknown", self.at("2026-08-12T08:04"))
+        assert r and "unknown timing" in r
+
+    def test_past_report_refused_for_every_timing(self):
+        for timing in ("bmo", "amc", "unknown"):
+            assert post_hoc_reason("2026-08-11", timing, self.at("2026-08-12T08:04"))
