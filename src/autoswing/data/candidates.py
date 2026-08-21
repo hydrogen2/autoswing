@@ -25,6 +25,9 @@ def build_candidate(report: Report, reaction: Reaction | None, floors: dict,
         "eps_forecast": report.eps_forecast,
         "surprise_pct": report.surprise_pct,
         "num_estimates": report.num_estimates,
+        # Never a rejection — labels why the headline surprise may mislead
+        # (thin coverage, tiny denominator, one-off items). See earnings.quality_flags.
+        "quality_flags": report.quality_flags,
         "market_cap": report.market_cap,
         "reaction": asdict(reaction) if reaction else None,
         "rejects": [],

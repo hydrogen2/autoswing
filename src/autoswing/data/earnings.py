@@ -8,7 +8,7 @@ guess. The risk gate treats "unknown" as a rejection, which is the point.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -40,6 +40,8 @@ class Report:
     num_estimates: int | None
     market_cap: float | None
     company: str = ""
+    # Populated by parse_calendar_rows; see quality_flags() for the meanings.
+    quality_flags: list[str] = field(default_factory=list)
 
 
 def _money(s: str | None) -> float | None:
@@ -72,6 +74,49 @@ def _int(v) -> int | None:
     return int(f) if f is not None else None
 
 
+# -- data-quality flags --------------------------------------------------------
+#
+# The calendar feed reports GAAP EPS against a consensus of unknown vintage
+# and unknown depth. Three times in a week (2026-08-14 EROC/KTB, 08-17,
+# 08-20 DUOT) it produced a surprise_pct that was arithmetically fine and
+# economically meaningless, and only the brain's manual news cross-check
+# caught it. These flags make the same doubt structural: they never suppress
+# a candidate, they label WHY the headline number may not mean what it says.
+#
+# DUOT 2026-08-20 is the worked example: forecast -$0.02, reported -$0.13
+# on ONE estimate -> "-550% miss", while the company actually printed $1.61
+# including a $53.2M asset-sale gain and announced a 55MW hosting deal.
+# Flags raised: thin_coverage, tiny_denominator, extreme_surprise_ratio.
+
+TINY_DENOMINATOR = 0.10       # |forecast| below this makes the % unstable
+EXTREME_SURPRISE_PCT = 200.0  # beyond this the ratio is noise, not signal
+SURPRISE_TOLERANCE_PCT = 5.0  # feed's own surprise vs derived, rounding slack
+
+
+def quality_flags(r: "Report") -> list[str]:
+    """Reasons the headline surprise may mislead. Never a rejection —
+    the brain decides; this only ensures it cannot be surprised silently."""
+    flags = []
+    if (r.num_estimates or 0) < 3:
+        flags.append("thin_coverage")
+    a, f = r.eps_actual, r.eps_forecast
+    if a is None or f is None:
+        flags.append("incomplete_eps")
+        return flags
+    if abs(f) < TINY_DENOMINATOR:
+        flags.append("tiny_denominator")
+    if (a < 0) != (f < 0):
+        flags.append("sign_flip")
+    if r.surprise_pct is not None:
+        if abs(r.surprise_pct) > EXTREME_SURPRISE_PCT:
+            flags.append("extreme_surprise_ratio")
+        if f != 0:
+            derived = 100.0 * (a - f) / abs(f)
+            if abs(derived - r.surprise_pct) > SURPRISE_TOLERANCE_PCT:
+                flags.append("surprise_inconsistent")
+    return flags
+
+
 def parse_calendar_rows(rows: list[dict], day: date) -> list[Report]:
     reports = []
     for r in rows:
@@ -91,6 +136,7 @@ def parse_calendar_rows(rows: list[dict], day: date) -> list[Report]:
                 company=r.get("name", ""),
             )
         )
+        reports[-1].quality_flags = quality_flags(reports[-1])
     return reports
 
 

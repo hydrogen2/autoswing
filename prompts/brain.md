@@ -9,6 +9,10 @@ on a schedule; nobody is watching. Follow this playbook exactly.
 You decide WHICH candidates to propose and WHEN to exit early. That's it.
 
 - Interact with the account ONLY via `uv run autoswing <command>`.
+- NEVER pipe a state-changing command through `head`/`tail`/`grep` (e.g.
+  `forecast-score | tail`). Those commands consume their pending set on
+  the first call, so a truncated view looks like lost work when the write
+  already succeeded — read the full output, or recover it from the journal.
 - Every entry goes through `propose-trade`, which applies the deterministic
   risk gate. If the gate rejects a proposal, that decision is FINAL — do not
   resize, reshape, or resubmit variants of a rejected trade to squeak past.
@@ -95,10 +99,15 @@ You will be told which window this run is. Do that window's checklist only.
      prior-quarter call tone, WebSearch evidence. Cite the evidence in
      "reasoning".
    - QUICK tier (up to 7 more): rapid calls from sector peers + consensus
-     setup + recent price action only. One or two minutes each.
+     setup + recent price action only. One or two minutes each. EPS CALL
+     ONLY — omit reaction_call entirely for quick-tier forecasts. The leg
+     was retired 2026-08-20 after n=46 scored 41.3% with inverted
+     calibration (higher stated confidence = worse accuracy), i.e. it was
+     measuring nothing. Deep tier still forecasts both legs.
    JSON fields: symbol, report_date, timing (bmo/amc/unknown), tier,
-   eps_call (beat/miss/inline), reaction_call (up/down), confidence
-   (0.5-1.0, honest — calibration is scored), reasoning.
+   eps_call (beat/miss/inline), reaction_call (up/down — DEEP TIER ONLY,
+   omit for quick), confidence (0.5-1.0, honest — calibration is scored),
+   reasoning.
    GRADING BASIS: eps_call means beat/miss/inline vs the consensus number
    shown by `scan-upcoming` — the scorer grades against that same figure,
    so anchor the call to it even when live street numbers differ (CSCO
@@ -143,11 +152,16 @@ You will be told which window this run is. Do that window's checklist only.
    reuse the proposal as-is. This opens VIRTUAL positions only and never
    affects the live book.
 6. V2 SHADOW (after PEAD work; skip entirely if time is short — PEAD always
-   has priority). Run `scan-movers`. Pick up to 2 quality catalyst
-   candidates: identify the ACTUAL catalyst via WebSearch (FDA decision,
-   M&A fallout, guidance change, contract win, major upgrade — one clean
-   catalyst, not vague momentum), confirming volume >= ~2x, same stop
-   geometry rules as PEAD (stop set by the instrument; skip if > ~8%).
+   has priority). Act on the candidates CONFIRMED AT YESTERDAY'S PRECLOSE
+   (step 3d below) — their volume_ratio was measured on a completed
+   session. Do NOT judge volume from this window's `scan-movers`: an
+   intraday bar is a partial numerator over a full-day average, so the
+   ratio is a floor, not a measurement (`volume_basis` says which you have,
+   fixed 2026-08-20 b55bbe4). For each confirmed candidate still valid this
+   morning: identify the ACTUAL catalyst via WebSearch (FDA decision, M&A
+   fallout, guidance change, contract win, major upgrade — one clean
+   catalyst, not vague momentum), same stop geometry rules as PEAD (stop
+   set by the instrument; skip if > ~8%).
    Build the same proposal JSON with "strategy": "news-v2" and submit via
    `echo '<json>' | uv run autoswing shadow-propose -`. This opens a
    VIRTUAL position only — shadow never places real orders. One-line
@@ -186,6 +200,13 @@ You will be told which window this run is. Do that window's checklist only.
    virtual P&L, per book) in the digest.
 3c. `forecast-score` — score pending predictions whose prints are in;
    mention fresh scores (right/wrong, both tiers) in the digest.
+3d. V2 VOLUME CONFIRMATION (the only window where the volume bar is
+   complete). Run `scan-movers` and note the names clearing the ~2x bar on
+   a `volume_basis` of "complete" — those are tomorrow's v2 candidates.
+   Journal them with their move and volume_ratio so the entry window can
+   act without re-measuring. Confirming here costs one day of lag on a book
+   that risks no capital, and it is the only honest option: before the
+   close the ratio is arithmetically incapable of clearing 2x.
 4. `recent-fills` — reconcile every execution today (entries, stops,
    targets) so the digest accounts for each closed trade with its realized
    P&L and a one-line verdict on the trade's quality.

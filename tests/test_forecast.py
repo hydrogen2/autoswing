@@ -142,3 +142,54 @@ class TestAwaitingActuals:
     def test_grace_expiry_scores_what_is_known(self):
         assert not awaiting_actuals(None, 4.9, grace_expired=True)
         assert not awaiting_actuals(3.0, 4.9, grace_expired=False)
+
+
+class TestRetiredQuickReactionLeg:
+    """Quick tier stopped forecasting reactions 2026-08-20 (n=46, 41.3%,
+    inverted calibration). The leg must be optional there, still required
+    for deep, and a missing leg must be EXCLUDED from the denominator —
+    not scored wrong."""
+
+    def payload(self, **kw):
+        base = dict(symbol="X", report_date="2026-08-21", timing="bmo",
+                    tier="quick", eps_call="beat", confidence=0.6,
+                    reasoning="peer read-through")
+        base.update(kw)
+        return base
+
+    def test_quick_may_omit_reaction(self):
+        assert validate_forecast(self.payload()) == []
+
+    def test_quick_rejects_a_bad_reaction_value(self):
+        assert validate_forecast(self.payload(reaction_call="sideways"))
+
+    def test_quick_still_accepts_an_explicit_reaction(self):
+        assert validate_forecast(self.payload(reaction_call="up")) == []
+
+    def test_deep_still_requires_reaction(self):
+        assert validate_forecast(self.payload(tier="deep"))
+        assert validate_forecast(self.payload(tier="deep", reaction_call="up")) == []
+
+    def test_missing_leg_scores_as_not_forecast(self):
+        s = score_forecast({"id": "X-1", "tier": "quick", "eps_call": "beat",
+                            "confidence": 0.6}, 8.0, 3.0, "now")
+        assert s["reaction_actual"] == "not_forecast"
+        assert s["reaction_correct"] is False
+        assert s["eps_correct"] is True
+        assert s["scorable"] is True
+
+    def test_not_forecast_excluded_from_denominator(self):
+        scored = [
+            {"forecast_id": "A", "tier": "quick", "scorable": True,
+             "eps_actual": "beat", "eps_correct": True,
+             "reaction_actual": "not_forecast", "reaction_correct": False,
+             "confidence": 0.6},
+            {"forecast_id": "B", "tier": "quick", "scorable": True,
+             "eps_actual": "beat", "eps_correct": True,
+             "reaction_actual": "up", "reaction_correct": True,
+             "confidence": 0.6},
+        ]
+        q = compute_stats([], scored)["tiers"]["quick"]
+        assert q["eps_n"] == 2 and q["eps_hit_rate"] == 1.0
+        # only the forecast that HAD a leg counts toward the reaction rate
+        assert q["reaction_n"] == 1 and q["reaction_hit_rate"] == 1.0

@@ -357,3 +357,52 @@ class TestSameDayBmoStaleness:
     def test_old_report_beyond_30d_is_unknown(self):
         from datetime import date, datetime
         assert self._resolve([date(2026, 5, 15)], [], datetime(2026, 8, 17, 10, 0)) == "unknown"
+
+
+class TestQualityFlags:
+    """Data-quality flags label a misleading headline surprise; they must
+    never reject a candidate, and must stay quiet on clean rows."""
+
+    def row(self, **kw):
+        base = {"symbol": "T", "eps": "$1.55", "epsForecast": "$1.48",
+                "surprise": "4.7", "noOfEsts": "12", "time": "time-pre-market"}
+        base.update(kw)
+        return parse_calendar_rows([base], date(2026, 8, 20))[0]
+
+    def test_clean_row_has_no_flags(self):
+        assert self.row().quality_flags == []
+
+    def test_duot_case_all_three_flags(self):
+        # 2026-08-20: forecast -$0.02, reported -$0.13, 1 estimate -> -550%,
+        # while the real print was +$1.61 incl. a $53.2M asset-sale gain.
+        r = self.row(eps="($0.13)", epsForecast="($0.02)", surprise="-550",
+                     noOfEsts="1")
+        assert set(r.quality_flags) == {
+            "thin_coverage", "tiny_denominator", "extreme_surprise_ratio"}
+
+    def test_thin_coverage_alone(self):
+        assert self.row(noOfEsts="2").quality_flags == ["thin_coverage"]
+
+    def test_sign_flip_flagged(self):
+        # loss expected, profit delivered: the % is real but the framing misleads
+        r = self.row(eps="$0.40", epsForecast="($0.20)", surprise="300")
+        assert "sign_flip" in r.quality_flags
+
+    def test_surprise_inconsistent_with_its_own_operands(self):
+        # feed says +50% but (1.55-1.48)/1.48 is +4.7%
+        assert "surprise_inconsistent" in self.row(surprise="50").quality_flags
+
+    def test_incomplete_eps_short_circuits(self):
+        r = self.row(eps="N/A")
+        assert "incomplete_eps" in r.quality_flags
+        assert "tiny_denominator" not in r.quality_flags
+
+    def test_flags_never_reject(self):
+        # build_candidate must not turn a flag into a rejection
+        from autoswing.data.earnings import quality_flags
+        rep = make_report(num_estimates=1, eps_forecast=-0.02, eps_actual=-0.13,
+                          surprise_pct=-550.0)
+        rep.quality_flags = quality_flags(rep)
+        c = build_candidate(rep, make_reaction(), FLOORS)
+        assert c["rejects"] == []
+        assert c["quality_flags"] == rep.quality_flags

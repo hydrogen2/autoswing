@@ -39,7 +39,12 @@ class Forecast:
     timing: str               # bmo | amc | unknown
     tier: str                 # deep | quick
     eps_call: str             # beat | miss | inline
-    reaction_call: str        # up | down
+    # RETIRED for the quick tier on 2026-08-20: after n=46 the quick
+    # reaction leg scored 41.3% with INVERTED calibration (the 50-60%
+    # confidence bucket hit 36.7%), i.e. stated confidence was anti-signal.
+    # Deep tier keeps it (n=20, still measuring). None = not forecast, which
+    # is excluded from the denominator rather than scored wrong.
+    reaction_call: str | None  # up | down | None
     confidence: float         # 0.5..1.0
     reasoning: str = ""
 
@@ -50,8 +55,12 @@ def validate_forecast(payload: dict) -> list[str]:
         errs.append("symbol required")
     if payload.get("eps_call") not in EPS_CALLS:
         errs.append(f"eps_call must be one of {EPS_CALLS}")
-    if payload.get("reaction_call") not in REACTION_CALLS:
-        errs.append(f"reaction_call must be one of {REACTION_CALLS}")
+    rc = payload.get("reaction_call")
+    if payload.get("tier") == "deep":
+        if rc not in REACTION_CALLS:
+            errs.append(f"reaction_call must be one of {REACTION_CALLS} for the deep tier")
+    elif rc is not None and rc not in REACTION_CALLS:
+        errs.append(f"reaction_call must be one of {REACTION_CALLS} or omitted (quick tier)")
     if payload.get("tier") not in TIERS:
         errs.append(f"tier must be one of {TIERS}")
     try:
@@ -120,10 +129,23 @@ def awaiting_actuals(surprise_pct: float | None, move_pct: float | None,
     return (surprise_pct is None or move_pct is None) and not grace_expired
 
 
+def needs_reaction_leg(tier: str) -> bool:
+    """Deep tier still forecasts reactions; quick tier stopped 2026-08-20."""
+    return tier == "deep"
+
+
 def score_forecast(fc: dict, surprise_pct: float | None,
                    move_pct: float | None, scored_at: str) -> dict:
     eps_actual = classify_eps(surprise_pct)
-    reaction_actual = classify_reaction(move_pct) if move_pct is not None else "unknown"
+    if not fc.get("reaction_call"):
+        # Leg was never forecast (quick tier after 2026-08-20). Distinct from
+        # "unknown", which means the actual is unavailable — both are excluded
+        # from the hit-rate denominator, but only this one is deliberate.
+        reaction_actual = "not_forecast"
+    elif move_pct is not None:
+        reaction_actual = classify_reaction(move_pct)
+    else:
+        reaction_actual = "unknown"
     return {
         "forecast_id": fc["id"],
         "tier": fc["tier"],
@@ -135,7 +157,7 @@ def score_forecast(fc: dict, surprise_pct: float | None,
         "reaction_actual": reaction_actual,
         # Conservative: "flat" scores an up/down call as wrong.
         "reaction_correct": (reaction_actual in REACTION_CALLS
-                             and reaction_actual == fc["reaction_call"]),
+                             and reaction_actual == fc.get("reaction_call")),
         "confidence": fc["confidence"],
         "scorable": eps_actual != "unknown" or reaction_actual != "unknown",
     }
@@ -152,7 +174,8 @@ def compute_stats(forecasts: list[dict], scores: list[dict]) -> dict:
         # not wrong — pooling it forces a miss into the hit rate (VST/TTWO
         # 2026-08-07 dragged quick-tier EPS down with unpublished actuals).
         eps_ss = [s for s in ss if s.get("eps_actual") != "unknown"]
-        rx_ss = [s for s in ss if s.get("reaction_actual") != "unknown"]
+        rx_ss = [s for s in ss
+                 if s.get("reaction_actual") not in ("unknown", "not_forecast")]
         tier_stats = {
             "n_scored": len(ss),
             "eps_n": len(eps_ss),
