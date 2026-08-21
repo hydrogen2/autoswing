@@ -18,6 +18,37 @@ FULL_SESSION = "full_session"
 PARTIAL_SESSION = "partial_session"
 
 
+V2_VOLUME_CONFIRM_RATIO = 2.0
+
+CONFIRMED = "confirmed"
+UNDETERMINED = "undetermined"
+UNCONFIRMED = "unconfirmed"
+
+
+def volume_verdict(volume_ratio: float, volume_basis: str,
+                   threshold: float = V2_VOLUME_CONFIRM_RATIO) -> str:
+    """Judge volume confirmation, honestly, on a partial bar.
+
+    "Wait for the close" is the wrong rule and it made step 3d a permanent
+    no-op: the preclose window fires at 15:30 ET, so the reaction bar is
+    NEVER complete when we look at it. But a partial ratio is a strict
+    FLOOR — the numerator only accumulates and the 20-session denominator
+    is fixed — so the asymmetry is usable:
+
+      ratio >= threshold on a partial bar  -> confirmed (it can only rise)
+      ratio <  threshold on a partial bar  -> undetermined, NOT rejected
+      complete bar                         -> confirmed / unconfirmed
+
+    Confirming early is arithmetically safe; only the *negative* call has
+    to wait for the close, and we simply never make it early.
+    """
+    if volume_ratio >= threshold:
+        return CONFIRMED
+    if volume_basis == PARTIAL_SESSION:
+        return UNDETERMINED
+    return UNCONFIRMED
+
+
 def session_complete(bar_date: date, now: datetime | None = None) -> bool:
     """Has bar_date's regular session finished?
 
@@ -45,7 +76,8 @@ class Reaction:
     last_close: float
     days_since_reaction: int  # trading days
     # "partial_session" => volume_ratio is a floor, not a measurement: the
-    # reaction bar is still trading. Never compare it against a volume bar.
+    # reaction bar is still trading. Compare it with volume_verdict(), which
+    # confirms on a floor that already clears and defers only the negative.
     volume_basis: str = FULL_SESSION
 
 

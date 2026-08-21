@@ -11,7 +11,10 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 
 from .earnings import recent_reporters
-from .prices import FULL_SESSION, PARTIAL_SESSION, fetch_history, session_complete
+from .prices import (
+    FULL_SESSION, PARTIAL_SESSION, V2_VOLUME_CONFIRM_RATIO, fetch_history,
+    session_complete, volume_verdict,
+)
 
 
 def _screen_symbols() -> list[str]:
@@ -133,18 +136,22 @@ def scan_movers(risk_config: dict, min_move_pct: float = 5.0,
             complete = session_complete(
                 df.index[-1].date() if hasattr(df.index[-1], "date")
                 else df.index[-1], now)
+            ratio = round(float(last["Volume"]) / avg_vol, 2) if avg_vol else 0.0
+            basis = FULL_SESSION if complete else PARTIAL_SESSION
             row.update({
                 "last_close": round(float(last["Close"]), 4),
                 "move_pct": move_pct,
-                "volume_ratio": round(float(last["Volume"]) / avg_vol, 2)
-                if avg_vol else 0.0,
-                "volume_basis": FULL_SESSION if complete else PARTIAL_SESSION,
+                "volume_ratio": ratio,
+                "volume_basis": basis,
+                "volume_verdict": volume_verdict(ratio, basis),
                 "adv_dollar_20d": round(adv, 0),
             })
             if not complete:
                 row["volume_note"] = (
-                    "volume_ratio is a FLOOR — session still trading; "
-                    "a volume-confirmation bar cannot be judged until the close"
+                    f"volume_ratio is a FLOOR — session still trading. "
+                    f"A floor at/above {V2_VOLUME_CONFIRM_RATIO}x is genuinely "
+                    "confirmed (volume only accumulates); below it is "
+                    "undetermined, not rejected — that call waits for the close"
                 )
             if move_pct < floors["min_move_pct"]:
                 rejects.append(f"move {move_pct}% < {floors['min_move_pct']}%")

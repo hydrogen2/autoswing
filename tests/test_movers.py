@@ -10,7 +10,10 @@ measurement rendering as a benign reading)."""
 from datetime import date, datetime, timezone
 
 from autoswing.data.movers import apply_earnings_cross_check
-from autoswing.data.prices import session_complete
+from autoswing.data.prices import (
+    CONFIRMED, FULL_SESSION, PARTIAL_SESSION, UNCONFIRMED, UNDETERMINED,
+    session_complete, volume_verdict,
+)
 
 TODAY = date(2026, 8, 10)
 
@@ -85,3 +88,37 @@ class TestEarningsCrossCheck:
         assert r["earnings_check"].startswith("clear")
         assert "2026-08-03" in r["earnings_check"]
         assert "7d ago" in r["earnings_check"]
+
+
+class TestVolumeVerdict:
+    """Floor semantics on a partial bar (2026-08-21).
+
+    The preclose window fires at 15:30 ET, so the reaction bar is never
+    complete when step 3d looks at it. "Cannot be judged until the close"
+    therefore made the v2 volume gate a permanent no-op. A partial ratio is
+    a strict floor, so the positive call is safe early; only the negative
+    one has to wait.
+    """
+
+    def test_partial_floor_above_threshold_confirms(self):
+        # MRNA 3.99x at 15:30 — it can only go up from here
+        assert volume_verdict(3.99, PARTIAL_SESSION) == CONFIRMED
+        assert volume_verdict(2.0, PARTIAL_SESSION) == CONFIRMED
+
+    def test_partial_floor_below_threshold_is_undetermined_not_rejected(self):
+        assert volume_verdict(1.15, PARTIAL_SESSION) == UNDETERMINED
+        assert volume_verdict(1.99, PARTIAL_SESSION) == UNDETERMINED
+
+    def test_complete_bar_below_threshold_is_a_real_rejection(self):
+        assert volume_verdict(1.15, FULL_SESSION) == UNCONFIRMED
+
+    def test_complete_bar_above_threshold_confirms(self):
+        assert volume_verdict(2.4, FULL_SESSION) == CONFIRMED
+
+    def test_partial_bar_never_yields_a_negative_call(self):
+        for r in (0.0, 0.5, 1.0, 1.99):
+            assert volume_verdict(r, PARTIAL_SESSION) != UNCONFIRMED
+
+    def test_threshold_is_overridable(self):
+        assert volume_verdict(1.5, PARTIAL_SESSION, threshold=1.2) == CONFIRMED
+        assert volume_verdict(1.5, FULL_SESSION, threshold=3.0) == UNCONFIRMED
