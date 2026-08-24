@@ -7,12 +7,14 @@ LOGDIR="$REPO/state/brain/logs"
 LOCK=/tmp/autoswing-brain.lock
 export PATH="$HOME/.local/bin:$PATH"
 
-# Model is PINNED, not inherited. Two reasons: (1) an account-level default
-# change must never silently alter trading behaviour mid-experiment — the
-# lessons / wide-ledger / forecast series are only comparable within a model
-# regime; (2) the owner's interactive /model choice does not reach cron.
-# Changed Sonnet 5 -> Opus 5 on 2026-08-20 (see journal + docs/model-history).
-MODEL="${AUTOSWING_MODEL:-claude-opus-5}"
+# Models are PINNED, not inherited (see brain_run.sh for the full reasoning).
+# Sonnet 5 -> Opus 5 on 2026-08-20, -> Fable 5 on 2026-08-24. Quota
+# exhaustion falls back to the secondary model once rather than losing the
+# review entirely — 2026-08-18 lost a whole day's report to a session limit.
+MODEL_PRIMARY="${AUTOSWING_MODEL:-claude-fable-5}"
+MODEL_FALLBACK="${AUTOSWING_MODEL_FALLBACK:-claude-opus-5}"
+QUOTA_RE='(session|usage|weekly|monthly) limit|out of (quota|credit)|quota (exceeded|exhausted)'
+
 
 # Headless auth: long-lived token from .secrets.env. Interactive OAuth
 # sessions expire (2026-08-13: this script died on exactly that); the env
@@ -50,20 +52,44 @@ cd "$REPO"
 REPORT_FILE="$REPO/state/reports/$(date -u +%F).md"
 STAMP=$(mktemp /tmp/autoswing-manager-stamp.XXXXXX)
 
-{
-  echo "=== $(date -Is) manager run ==="
-  # `|| echo` keeps set -e from silently aborting the script on a claude
-  # failure — on 2026-08-13 an expired OAuth session died here with no
-  # alert, and the missing report was the only signal.
-  timeout --kill-after=60 3600 claude -p "$(cat prompts/manager.md)
+PROMPT="$(cat prompts/manager.md)
 
-TODAY (UTC): $(date -u +%F). Review this trading day." \
-    --model "$MODEL" \
+TODAY (UTC): $(date -u +%F). Review this trading day."
+
+run_manager() {   # $1 = model; echoes output, returns claude's exit status
+  local rc=0
+  timeout --kill-after=60 3600 claude -p "$PROMPT" \
+    --model "$1" \
     --settings config/manager-settings.json \
     --max-turns 80 \
-    --output-format text || echo "claude exited nonzero: $?"
-  echo "=== $(date -Is) done ==="
+    --output-format text >"$OUT" 2>&1 || rc=$?
+  cat "$OUT"
+  return $rc
+}
+
+OUT=$(mktemp /tmp/autoswing-manager-out.XXXXXX)
+ACTIVE_MODEL="$MODEL_PRIMARY"
+{
+  echo "=== $(date -Is) manager run (model $ACTIVE_MODEL) ==="
+  # Never let a claude failure abort the script under set -e — on 2026-08-13
+  # an expired OAuth session died here with no alert, and the missing report
+  # was the only signal. Quota exhaustion additionally retries on the
+  # fallback model, since the primary will not recover within this run.
+  RC=0
+  run_manager "$ACTIVE_MODEL" || RC=$?
+  if [ "$RC" -ne 0 ]; then
+    echo "$(date -Is) manager failed on $ACTIVE_MODEL (exit $RC)"
+    if grep -qiE "$QUOTA_RE" "$OUT"; then
+      ACTIVE_MODEL="$MODEL_FALLBACK"
+      echo "$(date -Is) FALLBACK: $MODEL_PRIMARY out of quota -> retrying on $ACTIVE_MODEL"
+      RC=0
+      run_manager "$ACTIVE_MODEL" || RC=$?
+      [ "$RC" -ne 0 ] && echo "$(date -Is) fallback model also failed (exit $RC)"
+    fi
+  fi
+  echo "=== $(date -Is) done (model=$ACTIVE_MODEL) ==="
 } >>"$LOG" 2>&1
+rm -f "$OUT"
 
 # Dead-man check: a successful review leaves today's report, freshly
 # written. Anything else (auth expiry, crash, empty run) must be as loud
