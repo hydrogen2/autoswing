@@ -93,9 +93,20 @@ def _dispatch_data(config, journal: Journal, args):
             return {"scored": [], "pending": 0, "by_category": {}}
         history = fetch_history(sorted({s["symbol"] for s in skips}), period="3mo")
         result = score_skips(skips, history)
+        # Stop-geometry counterfactual: raw forward return is the wrong unit
+        # for a category defined by a wide stop (wide stop = fewer shares =
+        # smaller R for the same % move). Replays those declines in R.
+        from ..research import replay_stop_geometry_skips
+
+        replay = replay_stop_geometry_skips(
+            skips, history,
+            int(config.strategy.get("max_hold_days", 15)))
+        result["stop_geometry_replay"] = replay
         journal.record("research.skip_outcomes",
                        by_category=result["by_category"],
-                       pending=result["pending"])
+                       pending=result["pending"],
+                       stop_geometry_replay={
+                           k: v for k, v in replay.items() if k != "results"})
         return result
     raise ValueError(f"unknown data command {args.command!r}")
 

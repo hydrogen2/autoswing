@@ -170,3 +170,78 @@ class TestSkips:
                   "category": "capacity", "reason": "x"}]
         out = score_skips(skips, {"T": df}, today=df.index[2].date())
         assert out["pending"] == 1 and out["scored"] == []
+
+
+class TestStopGeometryReplay:
+    """The counterfactual must never let a guessed stop reach the verdict —
+    this category is DEFINED by the stop distance, so an inferred one is the
+    one number we cannot fake."""
+
+    def frame(self, closes, lows=None, highs=None, start="2026-08-03"):
+        import pandas as pd
+        n = len(closes)
+        return pd.DataFrame({
+            "Open": closes, "Close": closes,
+            "High": highs or [c * 1.01 for c in closes],
+            "Low": lows or [c * 0.99 for c in closes],
+            "Volume": [1_000_000] * n,
+        }, index=pd.bdate_range(start, periods=n))
+
+    def test_logged_geometry_is_used_verbatim(self):
+        from autoswing.research import replay_skip
+        df = self.frame([100.0, 100.0, 100.0, 88.0])   # last bar low 87.12
+        skip = {"symbol": "X", "date": df.index[2].date().isoformat(),
+                "category": "stop_geometry", "entry": 100.0, "stop": 90.0}
+        r = replay_skip(skip, df, 15, df.index[-1].date())
+        assert r["basis"] == "logged"
+        assert r["entry"] == 100.0 and r["stop"] == 90.0
+        assert r["stop_distance_pct"] == 10.0
+
+    def test_reconstruction_uses_the_reaction_day_low(self):
+        # biggest move is the middle bar; its low must become the stop, not
+        # the narrow-range bar next to it
+        from autoswing.research import replay_skip
+        df = self.frame([100.0, 112.0, 112.5],
+                        lows=[99.0, 104.0, 111.8], highs=[101.0, 113.0, 113.0])
+        skip = {"symbol": "X", "date": df.index[2].date().isoformat(),
+                "category": "stop_geometry"}
+        r = replay_skip(skip, df, 15, df.index[-1].date())
+        assert r["stop"] == 104.0          # reaction-day low, not 111.8
+        assert r["basis"] == "reconstructed"
+
+    def test_implausibly_tight_reconstruction_is_marked_unreliable(self):
+        from autoswing.research import replay_skip
+        df = self.frame([100.0, 100.2, 100.1],
+                        lows=[99.9, 100.0, 100.0], highs=[100.3, 100.4, 100.2])
+        skip = {"symbol": "X", "date": df.index[2].date().isoformat(),
+                "category": "stop_geometry"}
+        assert replay_skip(skip, df, 15, df.index[-1].date())["basis"] == \
+            "unreliable_reconstruction"
+
+    def test_verdict_counts_logged_only_and_gates_on_n(self):
+        from autoswing.research import replay_stop_geometry_skips
+        df = self.frame([100.0, 100.0, 100.0, 88.0])   # last bar low 87.12
+        d = df.index[2].date().isoformat()
+        skips = [
+            {"symbol": "L", "date": d, "category": "stop_geometry",
+             "entry": 100.0, "stop": 90.0},
+            {"symbol": "R", "date": d, "category": "stop_geometry"},
+            {"symbol": "OTHER", "date": d, "category": "liquidity",
+             "entry": 100.0, "stop": 90.0},
+        ]
+        hist = {"L": df, "R": df, "OTHER": df}
+        out = replay_stop_geometry_skips(skips, hist, 15, df.index[-1].date())
+        assert out["n_replayed"] == 2                    # liquidity excluded
+        assert out["verdict"]["n"] == 1                  # logged only
+        assert out["verdict"]["verdict_ready"] is False  # n=1 < 20
+        assert out["verdict"]["basis"] == "logged geometry only"
+        assert "caveat" in out["indicative_reconstructed"]
+
+    def test_skip_validation_requires_entry_and_stop_together(self):
+        from autoswing.research import validate_skip
+        base = {"symbol": "X", "category": "stop_geometry", "reason": "wide stop"}
+        assert validate_skip(base) == []
+        assert validate_skip({**base, "entry": 100.0})
+        assert validate_skip({**base, "stop": 90.0})
+        assert validate_skip({**base, "entry": 100.0, "stop": 90.0}) == []
+        assert validate_skip({**base, "entry": 90.0, "stop": 100.0})

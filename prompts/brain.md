@@ -60,7 +60,18 @@ From `gate-status` take virtual_equity. Then:
 - risk budget = 1% of virtual equity (e.g. $500 on $50k)
 - entry_limit = near last price (limit, never chase more than ~0.5% above)
 - stop_loss = below the reaction-day low, or entry - ~1x the stock's recent
-  daily range; if that stop is more than ~8% away the setup is too hot — skip
+  daily range. CEILING (revised 2026-08-24): ~8% is the skip line WHEN THE
+  RISK BUDGET BINDS. When the POSITION CAP binds first — i.e. cap-limited
+  shares put the trade's dollar risk comfortably inside risk_budget_dollars
+  — judge the ceiling by dollar risk, not percentage, and a stop somewhat
+  wider than 8% is acceptable (NDSN 08-21: 8.5% stop, $399 risk vs a $492
+  budget). Never above ~12% regardless: past that the 2R target needs a
+  move large enough that the trade is a lottery ticket, not a drift trade.
+  Evidence: 2023-25 backtest sweep — tightening the cap to 5% collapses the
+  edge to +0.007R, 8% gives +0.054R, 10% gives +0.058R on ~300 more trades
+  (at ~10% more drawdown); the live skip ledger says stop_geometry is the
+  best category we decline (+1.67% at 5d, n=10 — though only +0.63% at the
+  15d horizon we actually hold, so treat this as directional, not settled).
 - HARD RULE (AEIS, 2026-08-05, -$178): the stop is set by the INSTRUMENT,
   never by sizing arithmetic. Do not tighten a stop to raise risk
   utilization when the position cap limits share count — a stop above the
@@ -113,6 +124,13 @@ You will be told which window this run is. Do that window's checklist only.
    so anchor the call to it even when live street numbers differ (CSCO
    2026-08-10: street $1.17 vs scan consensus $0.99). Use live street
    color for the reaction_call leg only.
+   PRE-COMMITTED RETIREMENT RULE (set 2026-08-24, before the data arrived,
+   so this cannot become a fishing expedition): the DEEP reaction leg is
+   retired if its hit rate is still under 45% at n>=30. At the time of
+   writing it is 43.5% on n=23 with calibration running backwards — the
+   same signature that retired the quick leg. Do not retire it early on a
+   bad week, and do not keep it past n=30 on a good one. Deep EPS (82.6%)
+   continues either way; the manager reports the check when n crosses 30.
    Forecasts are IMMUTABLE — first call stands, no revisions. If the run
    is running long, cut the quick tier first, then deep. Never let
    forecasting delay position management or the PEAD shortlist.
@@ -171,7 +189,12 @@ You will be told which window this run is. Do that window's checklist only.
    (max ~6/day), log it structurally:
    `echo '{"symbol":"X","category":"low_quality_beat","reason":"..."}' | uv run autoswing log-skip -`
    Categories: low_quality_beat, sold_off, stop_geometry, liquidity,
-   capacity, already_moved, other. This measures whether your judgment
+   capacity, already_moved, other.
+   For a stop_geometry skip, ALSO include the geometry you would have used:
+   `"entry": <limit>, "stop": <chart stop>`. Without it the counterfactual
+   has to guess the stop from bars, and for this category the stop IS the
+   question — reconstruction produced 0.66% stops for names declined over a
+   >8% stop (2026-08-06). Both fields or neither. This measures whether your judgment
    beats the raw scanner — log honestly, including skips you're unsure of.
 8. `journal-note` digest: what you proposed and why, what you skipped and
    why (one line each), gate outcomes, shadow entries taken (wide + v2
@@ -200,13 +223,19 @@ You will be told which window this run is. Do that window's checklist only.
    virtual P&L, per book) in the digest.
 3c. `forecast-score` — score pending predictions whose prints are in;
    mention fresh scores (right/wrong, both tiers) in the digest.
-3d. V2 VOLUME CONFIRMATION (the only window where the volume bar is
-   complete). Run `scan-movers` and note the names clearing the ~2x bar on
-   a `volume_basis` of "complete" — those are tomorrow's v2 candidates.
-   Journal them with their move and volume_ratio so the entry window can
-   act without re-measuring. Confirming here costs one day of lag on a book
-   that risks no capital, and it is the only honest option: before the
-   close the ratio is arithmetically incapable of clearing 2x.
+3d. V2 VOLUME CONFIRMATION. Run `scan-movers` and read `volume_verdict`
+   per candidate (99e6593) — do NOT re-derive it from volume_ratio:
+   - "confirmed": the ratio is already at/above the bar. A partial ratio is
+     a strict FLOOR (the numerator only accumulates while the denominator
+     is fixed), so this is genuine even though preclose fires at 15:30 ET
+     and the bar is not complete. Journal these as tomorrow's v2 candidates
+     with their move and ratio.
+   - "undetermined": below the bar on a partial basis — NOT a rejection,
+     just not yet. Re-check tomorrow; never log it as a failed candidate.
+   - "rejected": below the bar on a complete basis. Genuinely out.
+   The earlier wording here required a "complete bar", which preclose never
+   sees — that made this step a permanent no-op that failed as an ordinary
+   empty result. Confirm on the floor; defer only the negative call.
 4. `recent-fills` — reconcile every execution today (entries, stops,
    targets) so the digest accounts for each closed trade with its realized
    P&L and a one-line verdict on the trade's quality.

@@ -57,6 +57,13 @@ run_check() { # name, command...
 
 run_check "gate-status"       uv run autoswing gate-status
 run_check "get-positions"     uv run autoswing get-positions
+# recent-fills here is not just a liveness probe: the hourly cadence is the
+# only thing watching the 15:30-16:00 gap. Fills into the closing auction
+# land after preclose has run, and recent-fills is today-only, so the next
+# morning returns [] and the fill is invisible to every brain window (EL
+# 2026-08-20, 50 @ 96.52, unnarrated for a day). The 16:45 ET run captures
+# it into the journal, where the nightly review picks it up.
+run_check "recent-fills"      uv run autoswing recent-fills
 
 # Quote is special: an empty-but-successful quote usually means the owner's
 # live login holds the market-data seat (single-seat sharing). That's a

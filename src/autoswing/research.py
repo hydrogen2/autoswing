@@ -191,6 +191,18 @@ def validate_skip(payload: dict) -> list[str]:
         errs.append(f"category must be one of {SKIP_CATEGORIES}")
     if not payload.get("reason", "").strip():
         errs.append("reason required")
+    # Optional geometry: for stop_geometry skips the brain should log the
+    # entry/stop it WOULD have used, so the counterfactual replays the real
+    # declined trade instead of a reconstruction. Both or neither.
+    e, st = payload.get("entry"), payload.get("stop")
+    if (e is None) != (st is None):
+        errs.append("entry and stop must be provided together (or both omitted)")
+    elif e is not None:
+        try:
+            if float(e) <= float(st):
+                errs.append("entry must be above stop (long-only)")
+        except (TypeError, ValueError):
+            errs.append("entry and stop must be numbers")
     return errs
 
 
@@ -237,3 +249,135 @@ def score_skips(skips: list[dict], history: dict,
                                      / len(with15), 2) if with15 else None,
         }
     return {"scored": scored, "pending": pending, "by_category": summary}
+
+
+# -- stop-geometry skip counterfactual ----------------------------------------
+#
+# The playbook's ~8% stop ceiling makes us decline trades whose honest chart
+# stop is wide. The skip ledger says that is our costliest skip category by
+# raw forward return — but raw return is the wrong unit: a wide stop means
+# fewer shares, so the same percentage move is a smaller R. This replays each
+# declined trade under the SAME mechanics the live book uses (stop-first on
+# ambiguous bars, 2R target, 15-day time-box) and reports R.
+#
+# Standing instrument, not a one-shot verdict: it reports verdict_ready only
+# at n >= 20 (proposed by the manager 2026-08-21, approved 08-24).
+
+REPLAY_MIN_N = 20
+RECONSTRUCTION_MIN_PCT = 4.0  # below this, the reconstruction missed the reaction low
+
+
+def replay_skip(skip: dict, df, max_hold_days: int = 15,
+                today: date | None = None) -> dict | None:
+    """One declined trade, replayed in R. Returns None if unreplayable.
+
+    Geometry is 'logged' when the skip recorded the entry/stop the brain
+    would have used, else 'reconstructed' from the bars: entry at the
+    skip-day close, stop at the lowest low of the reaction window (the two
+    sessions up to and including the skip day, mirroring 'below the
+    reaction-day low'). Reconstruction is an approximation and is labelled
+    as such — never pool the two bases without saying which is which.
+    """
+    from .shadow import ShadowPosition, mark_position
+
+    today = today or date.today()
+    skip_d = date.fromisoformat(skip["date"])
+    idx = [i for i, ts in enumerate(df.index) if ts.date() >= skip_d]
+    if not idx:
+        return None
+    i = idx[0]
+    if skip.get("entry") is not None and skip.get("stop") is not None:
+        entry, stop, basis = float(skip["entry"]), float(skip["stop"]), "logged"
+    else:
+        # Reconstruct: entry at the skip-day close, stop below the REACTION
+        # day's low — the largest-move session in the 3 up to the skip day,
+        # mirroring the playbook. A naive "lowest low of the last 2 bars"
+        # picks a narrow-range day instead and invents implausibly tight
+        # stops (ZBRA 0.66%, LIND 0.76% on 2026-08-06) for trades that were
+        # declined precisely BECAUSE their honest stop was wide.
+        entry = float(df["Close"].iloc[i])
+        look = df.iloc[max(0, i - 2):i + 1]
+        closes = look["Close"].astype(float)
+        moves = [abs(closes.iloc[k] / closes.iloc[k - 1] - 1) if k else 0.0
+                 for k in range(len(closes))]
+        stop = float(look["Low"].iloc[moves.index(max(moves))])
+        basis = "reconstructed"
+    if entry <= stop:
+        return None
+    risk = entry - stop
+    target = entry + 2 * risk
+    pos = ShadowPosition(
+        symbol=skip["symbol"], strategy="skip-replay",
+        opened=df.index[i].date().isoformat(),
+        entry_price=entry, quantity=1, stop_loss=stop, take_profit=target,
+    )
+    event = mark_position(pos, df, today, max_hold_days)
+    distance_pct = round(100 * risk / entry, 2)
+    if basis == "reconstructed" and distance_pct < RECONSTRUCTION_MIN_PCT:
+        # A stop_geometry skip means the honest stop was wide (>~8%). A
+        # reconstruction narrower than this did not find the reaction low,
+        # so the R it would produce is noise. Report it, never average it.
+        basis = "unreliable_reconstruction"
+    out = {
+        "symbol": skip["symbol"], "date": skip["date"], "basis": basis,
+        "entry": round(entry, 4), "stop": round(stop, 4),
+        "stop_distance_pct": distance_pct,
+    }
+    if event is None:
+        last = float(df["Close"].iloc[-1])
+        out |= {"status": "open", "r_multiple": round((last - entry) / risk, 3)}
+    else:
+        out |= {"status": "closed", "exit_reason": event["reason"],
+                "r_multiple": round((event["exit_price"] - entry) / risk, 3),
+                "days_held": event["days_held"]}
+    return out
+
+
+def replay_stop_geometry_skips(skips: list[dict], history: dict,
+                               max_hold_days: int = 15,
+                               today: date | None = None) -> dict:
+    """Aggregate R for trades declined on stop geometry. Closed replays only
+    feed the verdict; still-open ones are reported but not averaged."""
+    results = []
+    for s in skips:
+        if s.get("category") != "stop_geometry":
+            continue
+        df = history.get(s["symbol"])
+        if df is None:
+            continue
+        r = replay_skip(s, df, max_hold_days, today)
+        if r:
+            results.append(r)
+    # The VERDICT counts logged geometry only. Reconstruction cannot recover
+    # the stop the brain actually had in mind, and this category is defined
+    # by that very number — so reconstructed rows are reported as indicative
+    # and never mixed into the number that settles the policy question.
+    logged_closed = [r for r in results
+                     if r["status"] == "closed" and r["basis"] == "logged"]
+    recon_closed = [r for r in results
+                    if r["status"] == "closed" and r["basis"] == "reconstructed"]
+
+    def agg(rows):
+        rs = [r["r_multiple"] for r in rows]
+        if not rs:
+            return {"n": 0, "avg_r": None, "total_r": None, "win_rate": None}
+        return {"n": len(rs), "avg_r": round(sum(rs) / len(rs), 3),
+                "total_r": round(sum(rs), 2),
+                "win_rate": round(sum(1 for r in rs if r > 0) / len(rs), 3)}
+
+    return {
+        "n_replayed": len(results),
+        "still_open": sum(1 for r in results if r["status"] == "open"),
+        "verdict": agg(logged_closed) | {
+            "verdict_ready": len(logged_closed) >= REPLAY_MIN_N,
+            "min_n_for_verdict": REPLAY_MIN_N,
+            "basis": "logged geometry only",
+        },
+        "indicative_reconstructed": agg(recon_closed) | {
+            "caveat": "entry/stop inferred from bars, not the brain's actual "
+                      "geometry — directional only, never quote as the verdict",
+        },
+        "unreliable_reconstructions": sum(
+            1 for r in results if r["basis"] == "unreliable_reconstruction"),
+        "results": results,
+    }
