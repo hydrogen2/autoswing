@@ -335,7 +335,7 @@ def _forecast_log(args, journal: Journal):
         made_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
         report_date=payload["report_date"], timing=payload["timing"],
         tier=payload["tier"], eps_call=payload["eps_call"],
-        reaction_call=payload["reaction_call"],
+        reaction_call=payload.get("reaction_call"),
         confidence=float(payload["confidence"]),
         reasoning=payload["reasoning"],
     )
