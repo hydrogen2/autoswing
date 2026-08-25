@@ -24,12 +24,36 @@ permissions.
 
 ## Daily review checklist
 
+**WRITE THE REPORT BEFORE YOU RUN OUT OF RUN.** Your process is killed when
+this invocation ends — anything not yet written to
+`state/reports/<today>.md` is lost, and the harness will email an alert
+saying you produced nothing. On 2026-08-24 the review was fully researched,
+then deferred "until the 21:45 healthcheck lands"; the run ended at 21:21
+and the whole day's report was lost. Therefore:
+- NEVER wait on an event scheduled after your own run (a later healthcheck,
+  a market close, a background task you started). You fire at 21:15 UTC;
+  anything after that belongs in TOMORROW's report.
+- If a fact you wanted is unavailable in time, write the report WITHOUT it
+  and say so explicitly ("the 21:45 healthcheck had not run at the time of
+  writing; if it FAILs, that lands in tomorrow's report"). A report with a
+  stated gap is worth infinitely more than no report.
+- If you are unsure how much run you have left, write the report NOW and
+  refine it after. The file on disk is the deliverable; everything else is
+  working notes.
+
 1. **Runs**: check `state/brain/logs/` for today — did all four windows run
    (or correctly self-skip)? Any nonzero exits, truncated runs, or missing
    digests? Check `journal/<today>.jsonl` exists and parses.
 2. **Health**: today's `health-*.log` — FAILs are bugs to triage; WARNs are
    telemetry (note frequency). Check `/etc/cron.d/autoswing` ran on time
    (log timestamps).
+   ALSO check YESTERDAY's health log for runs after 21:15 UTC. You fire
+   before the day's last two hourly checks, so those belong to you a day
+   late — and nobody else reads them. This is not hypothetical: the 08-24
+   21:45 check was the one that caught a broker outage (a modal paper-
+   disclaimer dialog blocked every API call from 21:15 until the owner
+   restarted the gateway at 02:10 the next morning). Report a late FAIL as
+   "yesterday, after my run" so the timeline stays honest.
 3. **Trading audit**: read today's journal + digests. Did the brain follow
    its playbook — earnings verified before entry, sizing within budget,
    max 2 entries, skips reasoned, closed trades narrated with realized P&L?
@@ -63,11 +87,15 @@ permissions.
    forward returns vs our taken trades, forecast hit rates), plus propose
    exactly ONE experiment — new or from the backlog — with its cost, risk,
    and what decision it would inform. The owner green-lights or bins it.
-6. **Report**: write the email body to `state/reports/<today>.md`, then
-   send: `uv run python scripts/send_report.py --subject "autoswing daily:
-   <date> — <one-line verdict>" --body-file state/reports/<today>.md`.
-   If sending fails, the saved file IS the fallback — say so in your final
-   output.
+6. **Report**: write the email body to `state/reports/<today>.md` FIRST,
+   then send: `uv run python scripts/send_report.py --subject "autoswing
+   daily: <date> — <one-line verdict>" --body-file state/reports/<today>.md`.
+   Write the file even if a section is thin or a check is still pending —
+   an unwritten report is indistinguishable from a crashed run, and the
+   dead-man check will alert the owner as though you failed. If sending
+   fails, the saved file IS the fallback — say so in your final output.
+   If new facts arrive after you have written it, rewrite the file and
+   resend; that is cheap. Losing the report is not.
 
 ## Email format (plain text, human-first)
 
