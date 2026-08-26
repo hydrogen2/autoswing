@@ -194,12 +194,17 @@ def score_forecast(fc: dict, surprise_pct: float | None,
         "scored_at": scored_at,
         "surprise_pct": surprise_pct,
         "eps_actual": eps_actual,
-        "eps_correct": (eps_actual != "unknown" and eps_actual == fc["eps_call"]),
+        # None = unmeasured, never False: a False here reads as "graded wrong"
+        # in the journal even though compute_stats excludes the leg (HUBG/PSEC
+        # 2026-08-26 tripped a false staleness alarm exactly this way).
+        "eps_correct": (None if eps_actual == "unknown"
+                        else eps_actual == fc["eps_call"]),
         "move_pct": move_pct,
         "reaction_actual": reaction_actual,
         # Conservative: "flat" scores an up/down call as wrong.
-        "reaction_correct": (reaction_actual in REACTION_CALLS
-                             and reaction_actual == fc.get("reaction_call")),
+        "reaction_correct": (None if reaction_actual not in REACTION_CALLS
+                             + ("flat",)
+                             else reaction_actual == fc.get("reaction_call")),
         "confidence": fc["confidence"],
         "scorable": eps_actual != "unknown" or reaction_actual != "unknown",
     }

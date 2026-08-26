@@ -80,7 +80,28 @@ class TestScoring:
     def test_beat_call_on_miss_wrong(self):
         s = score_forecast(self.fc(), surprise_pct=-10.0, move_pct=-5.0,
                            scored_at="t")
-        assert not s["eps_correct"] and not s["reaction_correct"]
+        assert s["eps_correct"] is False and s["reaction_correct"] is False
+
+    def test_unmeasured_leg_scores_none_not_false(self):
+        # Regression (HUBG/PSEC 2026-08-26): grace expired with the calendar
+        # still missing surprise_pct, so the row was written with
+        # eps_correct False — which reads as "graded wrong" in the journal
+        # and tripped a false staleness alarm, even though compute_stats
+        # correctly excluded the leg. Unmeasured must render as None.
+        s = score_forecast(self.fc(), surprise_pct=None, move_pct=4.0,
+                           scored_at="t")
+        assert s["eps_actual"] == "unknown"
+        assert s["eps_correct"] is None
+        assert s["reaction_correct"] is True and s["scorable"]
+
+    def test_not_forecast_reaction_scores_none(self):
+        # Quick tier post-2026-08-20 omits reaction_call; the leg is
+        # deliberately absent, not wrong.
+        s = score_forecast(self.fc(reaction_call=None, tier="quick"),
+                           surprise_pct=9.0, move_pct=4.0, scored_at="t")
+        assert s["reaction_actual"] == "not_forecast"
+        assert s["reaction_correct"] is None
+        assert s["eps_correct"] is True and s["scorable"]
 
 
 class TestStats:
@@ -175,7 +196,8 @@ class TestRetiredQuickReactionLeg:
         s = score_forecast({"id": "X-1", "tier": "quick", "eps_call": "beat",
                             "confidence": 0.6}, 8.0, 3.0, "now")
         assert s["reaction_actual"] == "not_forecast"
-        assert s["reaction_correct"] is False
+        # None since 2026-08-26: an absent leg is unmeasured, not wrong.
+        assert s["reaction_correct"] is None
         assert s["eps_correct"] is True
         assert s["scorable"] is True
 
