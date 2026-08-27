@@ -166,11 +166,12 @@ class TestAwaitingActuals:
         assert not awaiting_actuals(3.0, 4.9, grace_expired=False)
 
 
-class TestRetiredQuickReactionLeg:
+class TestRetiredReactionLeg:
     """Quick tier stopped forecasting reactions 2026-08-20 (n=46, 41.3%,
-    inverted calibration). The leg must be optional there, still required
-    for deep, and a missing leg must be EXCLUDED from the denominator —
-    not scored wrong."""
+    inverted calibration). Deep tier followed 2026-08-27 (n=31, 41.9%,
+    below the pre-agreed <45%-at-n>=30 retirement bar; 80-100% confidence
+    bucket 0/2). The leg is optional in BOTH tiers, and a missing leg must
+    be EXCLUDED from the denominator — not scored wrong."""
 
     def payload(self, **kw):
         base = dict(symbol="X", report_date="2026-08-21", timing="bmo",
@@ -188,9 +189,15 @@ class TestRetiredQuickReactionLeg:
     def test_quick_still_accepts_an_explicit_reaction(self):
         assert validate_forecast(self.payload(reaction_call="up")) == []
 
-    def test_deep_still_requires_reaction(self):
-        assert validate_forecast(self.payload(tier="deep"))
+    def test_deep_may_omit_reaction(self):
+        # Retired 2026-08-27: a deep forecast without a reaction call is valid.
+        assert validate_forecast(self.payload(tier="deep")) == []
+
+    def test_deep_still_accepts_an_explicit_reaction(self):
         assert validate_forecast(self.payload(tier="deep", reaction_call="up")) == []
+
+    def test_deep_rejects_a_bad_reaction_value(self):
+        assert validate_forecast(self.payload(tier="deep", reaction_call="sideways"))
 
     def test_missing_leg_scores_as_not_forecast(self):
         s = score_forecast({"id": "X-1", "tier": "quick", "eps_call": "beat",

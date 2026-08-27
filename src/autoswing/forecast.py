@@ -43,8 +43,11 @@ class Forecast:
     # RETIRED for the quick tier on 2026-08-20: after n=46 the quick
     # reaction leg scored 41.3% with INVERTED calibration (the 50-60%
     # confidence bucket hit 36.7%), i.e. stated confidence was anti-signal.
-    # Deep tier keeps it (n=20, still measuring). None = not forecast, which
-    # is excluded from the denominator rather than scored wrong.
+    # RETIRED for the deep tier on 2026-08-27: at n=31 it scored 41.9%,
+    # below the pre-agreed <45%-at-n>=30 bar, with the 80-100% confidence
+    # bucket at 0/2 — the same inversion. Deep EPS calls stay (74.2%).
+    # None = not forecast, which is excluded from the denominator rather
+    # than scored wrong.
     reaction_call: str | None  # up | down | None
     confidence: float         # 0.5..1.0
     reasoning: str = ""
@@ -57,11 +60,8 @@ def validate_forecast(payload: dict) -> list[str]:
     if payload.get("eps_call") not in EPS_CALLS:
         errs.append(f"eps_call must be one of {EPS_CALLS}")
     rc = payload.get("reaction_call")
-    if payload.get("tier") == "deep":
-        if rc not in REACTION_CALLS:
-            errs.append(f"reaction_call must be one of {REACTION_CALLS} for the deep tier")
-    elif rc is not None and rc not in REACTION_CALLS:
-        errs.append(f"reaction_call must be one of {REACTION_CALLS} or omitted (quick tier)")
+    if rc is not None and rc not in REACTION_CALLS:
+        errs.append(f"reaction_call must be one of {REACTION_CALLS} or omitted (leg retired both tiers)")
     if payload.get("tier") not in TIERS:
         errs.append(f"tier must be one of {TIERS}")
     try:
