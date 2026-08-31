@@ -67,6 +67,16 @@ def _dispatch_data(config, journal: Journal, args):
             for name, stats in comparison.items()
         })
         return comparison
+    if args.command == "fill-quality":
+        from ..config import PROJECT_ROOT
+        from ..research import fill_quality
+
+        result = fill_quality(PROJECT_ROOT / "journal")
+        journal.record("research.fill_quality", summary={
+            k: {m: v for m, v in result[k].items() if m != "fills"}
+            for k in ("entries", "stops", "targets", "market_exits")
+        } | {"unmatched": result["unmatched"]})
+        return result
     if args.command == "log-skip":
         return _log_skip(args, journal)
     if args.command == "backtest":

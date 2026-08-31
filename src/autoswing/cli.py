@@ -19,7 +19,7 @@ DATA_COMMANDS = (
     "scan-candidates", "next-earnings", "scan-movers",
     "shadow-mark", "shadow-status", "scan-upcoming",
     "forecast-log", "forecast-score", "forecast-stats",
-    "exit-counterfactuals", "log-skip", "skip-outcomes",
+    "exit-counterfactuals", "log-skip", "skip-outcomes", "fill-quality",
     "backtest", "lesson-pending", "lesson-log", "lessons", "trim-compare",
 )
 
@@ -172,6 +172,12 @@ def _build_parser() -> argparse.ArgumentParser:
     sub.add_parser(
         "exit-counterfactuals",
         help="research: replay all live entries under alternative exit rules",
+    )
+
+    sub.add_parser(
+        "fill-quality",
+        help="research: fill prices vs approved entry/stop/target prices "
+        "across the journal — the paper-to-live slippage baseline",
     )
 
     ls = sub.add_parser(

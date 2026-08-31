@@ -245,3 +245,89 @@ class TestStopGeometryReplay:
         assert validate_skip({**base, "stop": 90.0})
         assert validate_skip({**base, "entry": 100.0, "stop": 90.0}) == []
         assert validate_skip({**base, "entry": 90.0, "stop": 100.0})
+
+
+class TestFillQuality:
+    """The fill-quality baseline: fills vs the prices the gate approved."""
+
+    def write_journal(self, tmp_path, events):
+        p = tmp_path / "2026-08-27.jsonl"
+        p.write_text("\n".join(json.dumps(e) for e in events) + "\n")
+        return tmp_path
+
+    def fills(self, ts, rows):
+        return {"ts": ts, "event": "broker.recent_fills", "result": rows}
+
+    def test_entry_exit_classification_and_dedupe(self, tmp_path):
+        from autoswing.research import fill_quality
+        events = [
+            _gate_approval("SMTC", "2026-08-27T14:10:00+00:00"),
+            # entry filled 10 bps under the 34.90 limit (price improvement);
+            # the hourly healthcheck repeats the same fill list — identity
+            # (symbol, side, order_id, time) must count it once
+            self.fills("2026-08-27T14:45:00+00:00",
+                       [{"symbol": "SMTC", "side": "BOT", "shares": 140.0,
+                         "price": 34.8651, "time": "2026-08-27 14:11:00+00:00",
+                         "order_id": 226}]),
+            self.fills("2026-08-27T15:45:00+00:00",
+                       [{"symbol": "SMTC", "side": "BOT", "shares": 140.0,
+                         "price": 34.8651, "time": "2026-08-27 14:11:00+00:00",
+                         "order_id": 226},
+                        # stop leg fills 32.20 vs the 32.30 stop: slipped
+                        # through by ~31 bps, a cost, so improvement < 0
+                        {"symbol": "SMTC", "side": "SLD", "shares": 140.0,
+                         "price": 32.20, "time": "2026-08-27 15:41:00+00:00",
+                         "order_id": 227}]),
+        ]
+        out = fill_quality(self.write_journal(tmp_path, events))
+        assert out["entries"]["n"] == 1
+        assert out["entries"]["mean_bps_weighted"] == 10.0
+        assert out["stops"]["n"] == 1
+        assert out["stops"]["mean_bps_weighted"] == -31.0
+        assert out["targets"]["n"] == 0
+        assert out["market_exits"]["n"] == 0
+
+    def test_market_exit_gets_no_invented_slippage(self, tmp_path):
+        # A time-box enforce close is a market order: it lands between the
+        # bracket legs and there is no promised price to measure against.
+        from autoswing.research import fill_quality
+        events = [
+            _gate_approval("TILE", "2026-08-27T14:10:00+00:00"),
+            self.fills("2026-08-27T19:45:00+00:00",
+                       [{"symbol": "TILE", "side": "SLD", "shares": 126.0,
+                         "price": 37.76, "time": "2026-08-27 19:30:00+00:00",
+                         "order_id": 248}]),
+        ]
+        out = fill_quality(self.write_journal(tmp_path, events))
+        assert out["market_exits"]["n"] == 1
+        assert "improvement_bps" not in out["market_exits"]["fills"][0]
+
+    def test_healthcheck_probes_and_unmatched_fills_stay_out(self, tmp_path):
+        from autoswing.research import fill_quality
+        probe = _gate_approval("XOM", "2026-08-27T14:45:00+00:00")
+        probe["proposal"]["rationale"] = "healthcheck"
+        events = [
+            probe,
+            # an adopted position's fill has no matching approval
+            self.fills("2026-08-27T14:50:00+00:00",
+                       [{"symbol": "ZZZ", "side": "BOT", "shares": 10.0,
+                         "price": 50.0, "time": "2026-08-27 14:49:00+00:00",
+                         "order_id": 300}]),
+        ]
+        out = fill_quality(self.write_journal(tmp_path, events))
+        assert out["entries"]["n"] == 0
+        assert out["unmatched"] == 1
+
+    def test_target_fill_measures_vs_target(self, tmp_path):
+        from autoswing.research import fill_quality
+        events = [
+            _gate_approval("EL", "2026-08-27T14:10:00+00:00"),
+            self.fills("2026-08-27T19:45:00+00:00",
+                       [{"symbol": "EL", "side": "SLD", "shares": 140.0,
+                         "price": 40.3, "time": "2026-08-27 19:30:00+00:00",
+                         "order_id": 260}]),
+        ]
+        out = fill_quality(self.write_journal(tmp_path, events))
+        assert out["targets"]["n"] == 1
+        assert out["targets"]["mean_bps_weighted"] == 0.0
+        assert out["targets"]["at_reference"] == 1

@@ -333,6 +333,134 @@ def replay_skip(skip: dict, df, max_hold_days: int = 15,
     return out
 
 
+# -- fill quality --------------------------------------------------------------
+
+def extract_fills(journal_dir: Path) -> list[dict]:
+    """Deduplicated executions from broker.recent_fills events. The hourly
+    healthcheck journals the same day's fill list over and over; identity is
+    (symbol, side, order_id, time) so each execution counts once."""
+    seen: set[tuple] = set()
+    fills = []
+    for f in sorted(journal_dir.glob("*.jsonl")):
+        for line in f.read_text().splitlines():
+            if '"broker.recent_fills"' not in line:
+                continue
+            e = json.loads(line)
+            for fill in e.get("result") or []:
+                if not fill.get("price"):
+                    continue
+                key = (fill["symbol"].upper(), fill.get("side"),
+                       fill.get("order_id"), str(fill.get("time", "")))
+                if key in seen:
+                    continue
+                seen.add(key)
+                fills.append({
+                    "symbol": fill["symbol"].upper(), "side": fill.get("side"),
+                    "shares": float(fill.get("shares", 0)),
+                    "price": float(fill["price"]),
+                    "day": str(fill.get("time", ""))[:10],
+                })
+    return fills
+
+
+def fill_quality(journal_dir: Path, tolerance_pct: float = 0.5) -> dict:
+    """Fill prices vs the prices the gate approved — the paper-to-live
+    slippage baseline. Paper fills are SIMULATED; the point of recording
+    their distribution now is to have the honest comparison series when
+    live fills start arriving, not to celebrate zero slippage.
+
+    Entries (BOT) match the same-day approved proposal, like
+    extract_live_trades. Exits (SLD) match the latest prior approval for
+    the symbol and are classified against its bracket: near/through the
+    stop -> stop slippage, near/past the target -> target improvement,
+    anything else (time-box, pre-earnings enforce, manual) is a market
+    order with no promised price, so no slippage number is invented."""
+    proposals: dict[str, dict] = {}
+    for f in sorted(journal_dir.glob("*.jsonl")):
+        for line in f.read_text().splitlines():
+            if '"gate.decision"' not in line:
+                continue
+            e = json.loads(line)
+            if e.get("event") != "gate.decision" or e.get("dry_run"):
+                continue
+            if not e.get("decision", {}).get("approved"):
+                continue
+            p = e.get("proposal", {})
+            if p.get("rationale") in ("healthcheck", "sizing sanity check"):
+                continue
+            proposals[f"{p['symbol'].upper()}-{e['ts'][:10]}"] = p
+
+    tol = tolerance_pct / 100.0
+    entries, exits, unmatched = [], [], []
+    for fill in extract_fills(journal_dir):
+        sym, day, price = fill["symbol"], fill["day"], fill["price"]
+        if fill["side"] == "BOT":
+            p = proposals.get(f"{sym}-{day}")
+            if not p:
+                unmatched.append(fill)
+                continue
+            limit = float(p["entry_limit"])
+            entries.append(fill | {
+                "entry_limit": limit,
+                "improvement_bps": round(1e4 * (limit - price) / limit, 1),
+            })
+            continue
+        if fill["side"] != "SLD":
+            continue
+        prior = sorted(k for k in proposals
+                       if k.startswith(sym + "-") and k[len(sym) + 1:] <= day)
+        if not prior:
+            unmatched.append(fill)
+            continue
+        p = proposals[prior[-1]]
+        stop, target = float(p["stop_loss"]), float(p["take_profit"])
+        if price <= stop * (1 + tol):
+            kind, ref = "stop", stop
+        elif price >= target * (1 - tol):
+            kind, ref = "target", target
+        else:
+            kind, ref = "market", None
+        row = fill | {"exit_kind": kind, "reference": ref}
+        if ref is not None:
+            row["improvement_bps"] = round(1e4 * (price - ref) / ref, 1)
+        exits.append(row)
+
+    # improvement_bps is signed the same way on both sides: positive means
+    # the fill beat the promised price (bought under limit / sold above the
+    # stop or target), negative means slippage cost us money.
+    def agg(rows):
+        # share-weighted, because a 5-share tail fill should not count as
+        # much as the 100-share body of the position
+        bps = [(r["improvement_bps"], r["shares"]) for r in rows
+               if "improvement_bps" in r]
+        if not bps:
+            return {"n": len(rows), "measured": 0}
+        w = sum(s for _, s in bps) or 1
+        return {
+            "n": len(rows), "measured": len(bps),
+            "mean_bps_weighted": round(sum(b * s for b, s in bps) / w, 1),
+            "worst_bps": round(min(b for b, _ in bps), 1),
+            "best_bps": round(max(b for b, _ in bps), 1),
+            "at_reference": sum(1 for b, _ in bps if b == 0),
+        }
+
+    stops = [r for r in exits if r["exit_kind"] == "stop"]
+    targets = [r for r in exits if r["exit_kind"] == "target"]
+    market = [r for r in exits if r["exit_kind"] == "market"]
+    return {
+        "entries": agg(entries) | {"fills": entries},
+        "stops": agg(stops) | {"fills": stops},
+        "targets": agg(targets) | {"fills": targets},
+        "market_exits": {"n": len(market), "fills": market,
+                         "note": "no promised price (time-box/enforce/manual) "
+                                 "— nothing to measure slippage against"},
+        "unmatched": len(unmatched),
+        "caveat": "paper fills are simulated by the broker; this series is "
+                  "the baseline to compare LIVE fills against after "
+                  "promotion, not evidence of real execution quality",
+    }
+
+
 def replay_stop_geometry_skips(skips: list[dict], history: dict,
                                max_hold_days: int = 15,
                                today: date | None = None) -> dict:
