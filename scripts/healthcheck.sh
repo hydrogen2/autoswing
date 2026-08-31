@@ -119,6 +119,42 @@ except Exception:
   fi
 fi
 
+# Self-heal the one failure we have a proven, bounded remedy for: IBKR's
+# paper-trading disclaimer dialog (error 10141) opens inside the gateway
+# container on some re-logins and blocks EVERY API call until the container
+# is restarted. Seen 2026-08-24 and again 2026-08-30 (that one on a Sunday,
+# invisible for 14h). A restart is the only thing that clears it; accepting
+# the disclaimer in the app does not, and the obvious IBC setting
+# (AcceptNonBrokerageAccountWarning) is already enabled and does not prevent it.
+#
+# Deliberately narrow — this is an automated admin action on a live account:
+#   * fires ONLY on the 10141 signature, never on generic failures;
+#   * at most once per 6h (stamp file), so a persistent fault cannot become
+#     a restart loop that repeatedly drops the API mid-session;
+#   * always journals before and after, and re-verifies with gate-status;
+#   * never touches positions or orders — bracket legs live at IBKR and have
+#     been verified intact across both manual restarts.
+RESTART_STAMP=/tmp/autoswing-gw-restart.stamp
+if [ ${#FAILS[@]} -gt 0 ] && grep -q "10141" "$LOG" 2>/dev/null; then
+  if [ -f "$RESTART_STAMP" ] && [ $(( $(date +%s) - $(stat -c %Y "$RESTART_STAMP") )) -lt 21600 ]; then
+    echo "$(date -Is) 10141 seen but a gateway restart already ran within 6h — not retrying" >>"$LOG"
+    uv run autoswing journal-note "HEALTHCHECK: error 10141 persists after a gateway restart within the last 6h. Auto-remediation is NOT retrying — this needs a human. The paper-disclaimer dialog may require accepting in the IBKR Client Portal as the PAPER user." >>"$LOG" 2>&1 || true
+  else
+    date > "$RESTART_STAMP"
+    echo "$(date -Is) AUTO-REMEDIATE: error 10141 detected, restarting ib-gateway" >>"$LOG"
+    uv run autoswing journal-note "HEALTHCHECK AUTO-REMEDIATE: error 10141 (paper-disclaimer dialog) blocked all broker calls; restarting docker-ib-gateway-1. Bracket legs live at IBKR and are unaffected by a container restart (verified 08-25 and 08-31)." >>"$LOG" 2>&1 || true
+    docker restart docker-ib-gateway-1 >>"$LOG" 2>&1 || echo "$(date -Is) gateway restart command FAILED" >>"$LOG"
+    sleep 90
+    if uv run autoswing gate-status >>"$LOG" 2>&1; then
+      echo "$(date -Is) AUTO-REMEDIATE OK: API responding after restart" >>"$LOG"
+      uv run autoswing journal-note "HEALTHCHECK AUTO-REMEDIATE succeeded: API responding after gateway restart. Next window should verify positions and bracket legs before trading." >>"$LOG" 2>&1 || true
+    else
+      echo "$(date -Is) AUTO-REMEDIATE FAILED: API still down after restart" >>"$LOG"
+      uv run autoswing journal-note "HEALTHCHECK AUTO-REMEDIATE FAILED: API still down after a gateway restart. Human needed — see the 08-24 incident memory for the escalation path." >>"$LOG" 2>&1 || true
+    fi
+  fi
+fi
+
 if [ ${#FAILS[@]} -gt 0 ]; then
   uv run autoswing journal-note "HEALTHCHECK FAILURE: ${FAILS[*]} — see $LOG. Brain: if a trading window hits this broken component, stand down and note it." >>"$LOG" 2>&1
   exit 1

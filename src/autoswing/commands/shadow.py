@@ -27,7 +27,7 @@ def _shadow_propose(broker: Broker, args):
     from datetime import date
 
     from ..shadow import (
-        CAPACITY_RULES, WIDE_NOTIONAL, ShadowPosition, load_book, save_book,
+        WIDE_NOTIONAL, ShadowPosition, load_book, save_book, waived_rules,
     )
     from .trading import _build_proposal, _make_gate
 
@@ -42,10 +42,11 @@ def _shadow_propose(broker: Broker, args):
     gate = _make_gate(broker)
     decision = gate.evaluate(proposal, broker.account_state())
 
+    waived = waived_rules(wide)
     blocking_failures = [r.rule for r in decision.rules
-                         if not r.passed and not (wide and r.rule in CAPACITY_RULES)]
+                         if not r.passed and r.rule not in waived]
     capacity_failures = [r.rule for r in decision.rules
-                         if not r.passed and wide and r.rule in CAPACITY_RULES]
+                         if not r.passed and r.rule in waived]
     accepted = not blocking_failures
 
     entry_price = None
@@ -77,8 +78,7 @@ def _shadow_propose(broker: Broker, args):
         "entry_price": entry_price,
         "decision": decision.to_dict(),
     }
-    if wide:
-        result["capacity_failures_informational"] = capacity_failures
+    result["capacity_failures_informational"] = capacity_failures
     broker.journal.record("shadow.proposal", proposal=payload, result={
         "wide": wide,
         "approved": accepted, "opened_virtual": opened,

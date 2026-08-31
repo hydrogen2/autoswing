@@ -91,9 +91,42 @@ class TestWideCapacityBypass:
             "max_open_positions", "max_gross_exposure", "duplicate_position",
         }
 
-    def test_same_account_blocks_non_wide(self, tmp_path, monkeypatch):
+    def test_v2_also_bypasses_portfolio_caps(self, tmp_path, monkeypatch):
+        # Changed 2026-08-31: a virtual book must not record entries only on
+        # days the LIVE book had room (v2 rejected TENB/NEO on 08-28 purely
+        # because live was 10/10). Portfolio rules are now informational for
+        # v2 as well as wide.
         r = submit(tmp_path, monkeypatch, full_account(), wide=False)
+        assert r["approved"] and r["opened_virtual"]
+        assert set(r["capacity_failures_informational"]) >= {
+            "max_open_positions", "max_gross_exposure", "duplicate_position"}
+
+    def test_v2_still_blocks_on_per_position_sizing(self, tmp_path, monkeypatch):
+        # Per-position rules do NOT depend on the live book, so they carry no
+        # bias and stay in force for v2 — a promoted strategy would still
+        # have to size within them. 999 sh @ $100 = $99.9k vs a $5k cap.
+        r = submit(tmp_path, monkeypatch, empty_account(), wide=False,
+                   quantity=999)
         assert not r["approved"] and not r["opened_virtual"]
+
+    def test_wide_waives_per_position_sizing_too(self, tmp_path, monkeypatch):
+        # wide overwrites quantity with a standardized notional, which makes
+        # per-position checks meaningless there.
+        r = submit(tmp_path, monkeypatch, empty_account(), wide=True,
+                   quantity=999)
+        assert r["approved"] and r["opened_virtual"]
+
+    def test_rule_split_is_exactly_as_intended(self):
+        from autoswing.shadow import (
+            CAPACITY_RULES, PORTFOLIO_RULES, POSITION_RULES, waived_rules,
+        )
+        assert PORTFOLIO_RULES == {
+            "daily_loss_halt", "max_open_positions", "max_gross_exposure",
+            "duplicate_position", "core_overlap", "pdt_guard"}
+        assert POSITION_RULES == {"risk_per_trade", "max_position_size"}
+        assert CAPACITY_RULES == PORTFOLIO_RULES | POSITION_RULES
+        assert waived_rules(wide=False) == PORTFOLIO_RULES
+        assert waived_rules(wide=True) == CAPACITY_RULES
 
     def test_strategy_rules_still_block_wide(self, tmp_path, monkeypatch):
         # earnings_blackout "unknown" is a strategy-definition rejection

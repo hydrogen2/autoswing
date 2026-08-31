@@ -4,7 +4,8 @@ Two books share this machinery:
 
 - v2 news-catalyst (state/shadow/positions.json): a shadow proposal runs
   through the REAL risk gate (so the record includes would-be gate
-  verdicts) but never places an order.
+  verdicts) but never places an order. Portfolio-level caps are recorded
+  and waived (see PORTFOLIO_RULES); per-position sizing still binds.
 - wide-PEAD measurement (state/shadow/wide_positions.json): every
   mechanically-qualifying PEAD candidate — including ones entered live and
   ones blocked purely by capacity — logged at a standardized notional.
@@ -44,15 +45,34 @@ from .manage import trading_days_between
 WIDE_NOTIONAL = 5000.0
 
 # Gate rules that reflect the account's capacity/state rather than the
-# strategy's definition. For --wide proposals these are recorded as
-# informational; a failure does not block the virtual entry. Everything
-# else (bracket_structure, market_hours, earnings_blackout, liquidity,
-# min_price, short_selling, kill_switch) still blocks.
-CAPACITY_RULES = frozenset({
-    "daily_loss_halt", "risk_per_trade", "max_position_size",
-    "max_open_positions", "max_gross_exposure", "duplicate_position",
-    "core_overlap", "pdt_guard",
+# strategy's definition. Split in two, because the two halves bias a
+# virtual book differently (2026-08-31):
+#
+# PORTFOLIO_RULES depend on the LIVE book's current state, so leaving them
+# in place makes a virtual book record entries only on days the real book
+# happened to have room — the v2 ledger was rejecting genuine candidates
+# (TENB, NEO on 08-28) purely because live was 10/10. Both shadow books
+# bypass these; a failure is recorded, never blocking.
+#
+# POSITION_RULES depend only on the proposal and virtual equity, not on the
+# live book, so they introduce no such bias and represent sizing discipline
+# any promoted strategy would still have to meet. v2 KEEPS them. --wide
+# bypasses them too, because it overwrites quantity with a standardized
+# notional, which makes per-position sizing checks meaningless there.
+#
+# Everything else (bracket_structure, market_hours, earnings_blackout,
+# liquidity, min_price, short_selling, kill_switch) always blocks.
+PORTFOLIO_RULES = frozenset({
+    "daily_loss_halt", "max_open_positions", "max_gross_exposure",
+    "duplicate_position", "core_overlap", "pdt_guard",
 })
+POSITION_RULES = frozenset({"risk_per_trade", "max_position_size"})
+CAPACITY_RULES = PORTFOLIO_RULES | POSITION_RULES
+
+
+def waived_rules(wide: bool) -> frozenset:
+    """Rules recorded-but-not-blocking for a shadow proposal."""
+    return CAPACITY_RULES if wide else PORTFOLIO_RULES
 
 
 @dataclass
