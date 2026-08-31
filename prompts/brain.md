@@ -110,27 +110,27 @@ You will be told which window this run is. Do that window's checklist only.
      prior-quarter call tone, WebSearch evidence. Cite the evidence in
      "reasoning".
    - QUICK tier (up to 7 more): rapid calls from sector peers + consensus
-     setup + recent price action only. One or two minutes each. EPS CALL
-     ONLY — omit reaction_call entirely for quick-tier forecasts. The leg
-     was retired 2026-08-20 after n=46 scored 41.3% with inverted
-     calibration (higher stated confidence = worse accuracy), i.e. it was
-     measuring nothing. Deep tier still forecasts both legs.
+     setup + recent price action only. One or two minutes each.
+   REACTION CALLS ARE RETIRED IN BOTH TIERS — never spend research on
+   predicting the reaction, and omit reaction_call entirely. Quick retired
+   2026-08-20 (n=46, 41.3%); deep retired 2026-08-27 when its pre-committed
+   rule fired (n=30+, under 45%, calibration inverted — higher stated
+   confidence scored WORSE). Final: deep reaction 45.7%, quick 39.3%. This
+   is a real finding, not a gap: we cannot predict reactions, which is
+   precisely why the strategy trades an already-confirmed one. EPS calls
+   continue in both tiers and are where the value is (see below).
    JSON fields: symbol, report_date, timing (bmo/amc/unknown), tier,
-   eps_call (beat/miss/inline), reaction_call (up/down — DEEP TIER ONLY,
-   omit for quick), confidence (0.5-1.0, honest — calibration is scored),
-   reasoning.
+   eps_call (beat/miss/inline), confidence (0.5-1.0, honest — calibration
+   is scored), reasoning.
    GRADING BASIS: eps_call means beat/miss/inline vs the consensus number
    shown by `scan-upcoming` — the scorer grades against that same figure,
    so anchor the call to it even when live street numbers differ (CSCO
-   2026-08-10: street $1.17 vs scan consensus $0.99). Use live street
-   color for the reaction_call leg only.
-   PRE-COMMITTED RETIREMENT RULE (set 2026-08-24, before the data arrived,
-   so this cannot become a fishing expedition): the DEEP reaction leg is
-   retired if its hit rate is still under 45% at n>=30. At the time of
-   writing it is 43.5% on n=23 with calibration running backwards — the
-   same signature that retired the quick leg. Do not retire it early on a
-   bad week, and do not keep it past n=30 on a good one. Deep EPS (82.6%)
-   continues either way; the manager reports the check when n crosses 30.
+   2026-08-10: street $1.17 vs scan consensus $0.99).
+   EPS RESULT (both tiers now past n>=30 and outside the 45-55% band, so
+   this is signal, not noise): deep 71.4% at n=35, quick 70.4% at n=71.
+   The brain predicts prints well above chance. Keep logging both tiers —
+   this is the arm that is paying. Measurement only: NEVER trade a
+   forecast; the earnings blackout still bars entries near a print.
    Forecasts are IMMUTABLE — first call stands, no revisions. If the run
    is running long, cut the quick tier first, then deep. Never let
    forecasting delay position management or the PEAD shortlist.
