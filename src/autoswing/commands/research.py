@@ -71,6 +71,8 @@ def _dispatch_data(config, journal: Journal, args):
         return _log_skip(args, journal)
     if args.command == "backtest":
         return _backtest(config, journal, args)
+    if args.command == "trim-compare":
+        return _trim_compare(journal, args)
     if args.command == "lesson-pending":
         return _lesson_pending(config, journal)
     if args.command == "lesson-log":
@@ -139,6 +141,80 @@ def _backtest(config, journal: Journal, args):
     # full per-trade detail lives in the results file, not stdout
     return {k: v for k, v in result.items() if k != "trades"} | {
         "results_file": str(out)}
+
+
+def _trim_compare(journal: Journal, args):
+    """Every trim rule vs buy-and-hold, per symbol and averaged.
+
+    Reports drawdown alongside return because they are the two halves of the
+    real question: trimming a winner almost always COSTS return, so it is
+    only justified if it buys enough risk reduction to be worth the price."""
+    import statistics as stx
+
+    from ..data.prices import fetch_history
+    from ..trim import RULES, simulate
+
+    syms = [s.strip().upper() for s in args.symbols.split(",") if s.strip()]
+    period = "5y" if args.days > 730 else "2y"
+    hist = fetch_history(syms, period=period)
+    cutoff_days = args.days
+
+    out, missing = {}, [s for s in syms if s not in hist]
+    series = {}
+    for s in syms:
+        if s not in hist:
+            continue
+        c = hist[s]["Close"]
+        c = c[c.index >= c.index[-1] - __import__("pandas").Timedelta(days=cutoff_days)]
+        series[s] = [float(x) for x in c]
+
+    for rule in RULES:
+        per = {}
+        for s, closes in series.items():
+            if len(closes) < 30:
+                continue
+            r = simulate(s, closes, rule, start_shares=args.shares)
+            per[s] = {"vs_hold_pct": r.vs_hold_pct, "max_dd_pct": r.max_drawdown_pct,
+                      "hold_max_dd_pct": r.hold_max_drawdown_pct,
+                      "trades": r.trades, "ending_shares": r.ending_shares,
+                      "avg_cost_basis": r.avg_cost_basis,
+                      "net_cost_basis": r.net_cost_basis}
+        if not per:
+            continue
+        rets = [v["vs_hold_pct"] for v in per.values()]
+        dds = [v["max_dd_pct"] for v in per.values()]
+        holds = [v["hold_max_dd_pct"] for v in per.values()]
+        out[rule] = {
+            "mean_vs_hold_pct": round(stx.mean(rets), 2),
+            "median_vs_hold_pct": round(stx.median(rets), 2),
+            "beat_hold_count": sum(1 for x in rets if x > 0),
+            "n_symbols": len(rets),
+            "mean_max_dd_pct": round(stx.mean(dds), 2),
+            "mean_hold_max_dd_pct": round(stx.mean(holds), 2),
+            "mean_dd_saved_pts": round(stx.mean(holds) - stx.mean(dds), 2),
+            "per_symbol": per,
+        }
+    result = {
+        "symbols": list(series), "missing": missing, "window_days": cutoff_days,
+        "benchmark": "buy-and-hold the same symbol (NOT VOO)",
+        "rules": out,
+        "caveats": [
+            "basket chosen today = survivorship bias; buy-and-hold is flattered",
+            "high-vol growth names are highly correlated — effective sample "
+            "size is far below the symbol count",
+            "results flip sign across windows; treat regime dependence as the "
+            "finding, not as an edge",
+            "lowering cost basis and maximising return are different "
+            "objectives and conflict on a rising stock",
+        ],
+    }
+    journal.record("research.trim_compare", symbols=list(series),
+                   window_days=cutoff_days,
+                   summary={k: {m: v[m] for m in
+                                ("mean_vs_hold_pct", "beat_hold_count",
+                                 "mean_dd_saved_pts")}
+                            for k, v in out.items()})
+    return result
 
 
 def _lessons_path():

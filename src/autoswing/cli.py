@@ -20,7 +20,7 @@ DATA_COMMANDS = (
     "shadow-mark", "shadow-status", "scan-upcoming",
     "forecast-log", "forecast-score", "forecast-stats",
     "exit-counterfactuals", "log-skip", "skip-outcomes",
-    "backtest", "lesson-pending", "lesson-log", "lessons",
+    "backtest", "lesson-pending", "lesson-log", "lessons", "trim-compare",
 )
 
 
@@ -200,6 +200,15 @@ def _build_parser() -> argparse.ArgumentParser:
                     help="reaction volume ratio floor (default 2.0)")
     bt.add_argument("--min-surprise", type=float, default=None,
                     help="EPS surprise floor, pct (default 5.0)")
+
+    tc = sub.add_parser(
+        "trim-compare",
+        help="research: concentrated-position trim rules vs BUY-AND-HOLD of "
+        "the same name (return AND drawdown). Measurement only — no orders.",
+    )
+    tc.add_argument("symbols", help="comma-separated, e.g. CRDO,RKLB,MU,VRT")
+    tc.add_argument("--days", type=int, default=730)
+    tc.add_argument("--shares", type=int, default=100)
 
     sub.add_parser(
         "lesson-pending",
