@@ -36,7 +36,20 @@ reconcile:
   # Orphan-order guard (see docs/incidents/2026-07-14-reset-orphan-short.md).
   # "shadow": journal decisions, never act. "enforce": execute them.
   # Promotion to enforce is HUMAN-ONLY, after a clean multi-week shadow record.
-  mode: shadow
+  #
+  # PROMOTED TO ENFORCE 2026-09-02 by the owner. Evidence:
+  #   * 439 shadow runs / 35 days. Only 3 decisions ever produced, all
+  #     cancel_orphans on VOYG 2026-08-06 — the near-miss itself, where an
+  #     unfilled entry bracket was misread as an orphan. Fixed in f2721d3.
+  #   * Since that fix: 18 days, ZERO decisions, while correctly declining
+  #     9 "pending entry" states and 2 transient suspects that resolved.
+  #     That is the false-positive question answered.
+  #   * Zero decisions also meant the EXECUTION branch had never run and had
+  #     no test. tests/test_reconcile_enforce.py now covers it (8 tests,
+  #     mutation-checked: a no-op enforce, a shadow that executes, and a
+  #     wrong stop quantity are each caught).
+  # To roll back, set this to "shadow" — no code change needed.
+  mode: enforce
   min_polls: 2
   min_suspect_minutes: 90
 
