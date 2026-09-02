@@ -243,8 +243,16 @@ def _manage_positions(broker: Broker, enforce: bool, meta_path=None):
         action, detail = evaluate_position(
             sym, m.placed_date, ned, broker.config.strategy
         )
+        # Per-position marks (when the broker snapshot carries them) so the
+        # brain can judge drift health per name, not just book-level.
+        pos = held.get(sym, {})
+        mark, avg = pos.get("market_price"), pos.get("avg_cost")
         entry = {"symbol": sym, "action": action, "detail": detail,
-                 "next_earnings": ned, "enforced": False}
+                 "next_earnings": ned, "enforced": False,
+                 "mark": mark,
+                 "unrealized_pnl": pos.get("unrealized_pnl"),
+                 "unrealized_pct": (round(100.0 * (mark - avg) / avg, 2)
+                                    if mark and avg else None)}
         if enforce and action != "hold":
             entry["close_result"] = broker.close_position(sym)
             entry["enforced"] = True

@@ -180,3 +180,47 @@ class TestBlankSnapshotGuard:
         assert "PENG" in load_meta(meta_path)
         assert "manage.snapshot_suspect" not in _events(journal)
         assert result["positions"][0]["symbol"] == "PENG"
+
+
+class TestPerPositionMarks:
+    """2026-09-02 preclose: the brain could only judge drift book-level
+    because no report carried per-position marks. manage-positions now
+    passes them through from the broker snapshot when available."""
+
+    def test_marks_reported_when_snapshot_carries_them(
+        self, journal, meta_path, monkeypatch
+    ):
+        import autoswing.data.earnings as earnings
+        monkeypatch.setattr(earnings, "next_earnings_date",
+                            lambda sym: "2026-10-13")
+        broker = StubBroker(
+            journal,
+            positions=[{"symbol": "PENG", "quantity": 96.0, "avg_cost": 76.21,
+                        "market_price": 80.02, "unrealized_pnl": 365.76}],
+            open_orders=PENG_ORDERS,
+        )
+        result = _manage_positions(broker, enforce=False, meta_path=meta_path)
+        entry = result["positions"][0]
+        assert entry["mark"] == 80.02
+        assert entry["unrealized_pnl"] == 365.76
+        assert entry["unrealized_pct"] == round(
+            100.0 * (80.02 - 76.21) / 76.21, 2)
+
+    def test_marks_none_when_feed_lacks_them(
+        self, journal, meta_path, monkeypatch
+    ):
+        # A stale portfolio feed must degrade to None marks, never break
+        # management or masquerade as a zero-P&L position.
+        import autoswing.data.earnings as earnings
+        monkeypatch.setattr(earnings, "next_earnings_date",
+                            lambda sym: "2026-10-13")
+        broker = StubBroker(
+            journal,
+            positions=[{"symbol": "PENG", "quantity": 96.0, "avg_cost": 76.21}],
+            open_orders=PENG_ORDERS,
+        )
+        result = _manage_positions(broker, enforce=False, meta_path=meta_path)
+        entry = result["positions"][0]
+        assert entry["mark"] is None
+        assert entry["unrealized_pnl"] is None
+        assert entry["unrealized_pct"] is None

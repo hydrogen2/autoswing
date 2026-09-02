@@ -95,6 +95,14 @@ class Broker:
         return result
 
     def get_positions(self) -> list[dict]:
+        # Marks ride along from the account's portfolio feed — free with the
+        # connection, unlike get_quote's per-symbol market-data polling. A
+        # missing or stale feed yields None marks, never an error: position
+        # existence must not depend on mark availability.
+        try:
+            marks = {i.contract.symbol: i for i in self.ib.portfolio()}
+        except Exception:
+            marks = {}
         positions = [
             {
                 "account": p.account,
@@ -102,6 +110,10 @@ class Broker:
                 "sec_type": p.contract.secType,
                 "quantity": p.position,
                 "avg_cost": p.avgCost,
+                "market_price": _num(
+                    getattr(marks.get(p.contract.symbol), "marketPrice", None)),
+                "unrealized_pnl": _num(
+                    getattr(marks.get(p.contract.symbol), "unrealizedPNL", None)),
             }
             for p in self.ib.positions()
         ]
