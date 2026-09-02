@@ -13,9 +13,26 @@ from datetime import date
 from .earnings import Report, recent_reporters
 from .prices import Reaction, fetch_history, reaction_metrics
 
+# A surprise this large, answered by a market move this far the OTHER way,
+# means the surprise number and the market are grading different quarters:
+# the feed's consensus basis (GAAP vs street-adjusted) or vintage is suspect,
+# or the story isn't EPS at all. GTLB 2026-09-02 is the worked example: the
+# feed graded a street-adjusted +33% beat as a -85.7% GAAP miss while the
+# stock gapped +22% on 2x volume — only a manual news check caught it.
+CONTRADICTION_SURPRISE_PCT = 25.0
+
 
 def build_candidate(report: Report, reaction: Reaction | None, floors: dict,
                     has_prices: bool = True) -> dict:
+    flags = list(report.quality_flags)
+    if (
+        report.surprise_pct is not None
+        and reaction is not None
+        and abs(report.surprise_pct) >= CONTRADICTION_SURPRISE_PCT
+        and abs(reaction.move_pct) >= floors["min_reaction_move_pct"]
+        and (report.surprise_pct > 0) != (reaction.move_pct > 0)
+    ):
+        flags.append("reaction_contradicts_surprise")
     c = {
         "symbol": report.symbol,
         "company": report.company,
@@ -26,8 +43,9 @@ def build_candidate(report: Report, reaction: Reaction | None, floors: dict,
         "surprise_pct": report.surprise_pct,
         "num_estimates": report.num_estimates,
         # Never a rejection — labels why the headline surprise may mislead
-        # (thin coverage, tiny denominator, one-off items). See earnings.quality_flags.
-        "quality_flags": report.quality_flags,
+        # (thin coverage, tiny denominator, one-off items, a reaction that
+        # contradicts the graded surprise). See earnings.quality_flags.
+        "quality_flags": flags,
         "market_cap": report.market_cap,
         "reaction": asdict(reaction) if reaction else None,
         "rejects": [],

@@ -405,4 +405,53 @@ class TestQualityFlags:
         rep.quality_flags = quality_flags(rep)
         c = build_candidate(rep, make_reaction(), FLOORS)
         assert c["rejects"] == []
-        assert c["quality_flags"] == rep.quality_flags
+        assert set(rep.quality_flags) <= set(c["quality_flags"])
+
+
+class TestReactionContradictsSurprise:
+    """GTLB 2026-09-02: the feed graded a street-adjusted +33% beat as a
+    -85.7% GAAP miss while the stock gapped +22% on 2x volume — a
+    consensus-basis mismatch only a manual news check caught. The market
+    voting hard against the graded surprise is now a structural label."""
+
+    def test_big_miss_with_big_pop_flagged(self):
+        c = build_candidate(
+            make_report(eps_actual=-0.13, eps_forecast=-0.07, surprise_pct=-85.7),
+            make_reaction(move_pct=14.9), FLOORS,
+        )
+        assert "reaction_contradicts_surprise" in c["quality_flags"]
+
+    def test_big_beat_sold_off_flagged(self):
+        # Rejected long-only anyway, but the label must still be honest.
+        c = build_candidate(make_report(surprise_pct=40.0),
+                            make_reaction(move_pct=-8.0), FLOORS)
+        assert "reaction_contradicts_surprise" in c["quality_flags"]
+
+    def test_aligned_surprise_and_reaction_not_flagged(self):
+        c = build_candidate(make_report(), make_reaction(), FLOORS)
+        assert "reaction_contradicts_surprise" not in c["quality_flags"]
+
+    def test_modest_surprise_not_flagged(self):
+        # An ordinary miss bought on guidance is not a basis mismatch.
+        c = build_candidate(make_report(surprise_pct=-10.0),
+                            make_reaction(move_pct=8.0), FLOORS)
+        assert "reaction_contradicts_surprise" not in c["quality_flags"]
+
+    def test_small_reaction_not_flagged(self):
+        c = build_candidate(make_report(surprise_pct=-85.7),
+                            make_reaction(move_pct=1.0), FLOORS)
+        assert "reaction_contradicts_surprise" not in c["quality_flags"]
+
+    def test_missing_surprise_tolerated(self):
+        c = build_candidate(make_report(surprise_pct=None),
+                            make_reaction(move_pct=14.9), FLOORS)
+        assert "reaction_contradicts_surprise" not in c["quality_flags"]
+
+    def test_no_reaction_tolerated(self):
+        c = build_candidate(make_report(surprise_pct=-85.7), None, FLOORS)
+        assert "reaction_contradicts_surprise" not in c["quality_flags"]
+
+    def test_report_flags_not_mutated(self):
+        r = make_report(surprise_pct=-85.7)
+        build_candidate(r, make_reaction(move_pct=14.9), FLOORS)
+        assert r.quality_flags == []
