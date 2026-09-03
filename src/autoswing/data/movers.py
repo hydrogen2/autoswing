@@ -8,13 +8,20 @@ this module only finds "something happened here" candidates.
 
 from __future__ import annotations
 
+import json
 from datetime import date, datetime, timedelta
+from pathlib import Path
 
 from .earnings import recent_reporters
 from .prices import (
-    FULL_SESSION, PARTIAL_SESSION, V2_VOLUME_CONFIRM_RATIO, fetch_history,
-    session_complete, volume_verdict,
+    FULL_SESSION, PARTIAL_SESSION, UNDETERMINED, V2_VOLUME_CONFIRM_RATIO,
+    fetch_history, session_complete, volume_verdict,
 )
+
+# An undetermined floor is only worth re-checking while its bar is fresh;
+# past this, no completed bar ever arrived (delisting, halt, persistent
+# fetch gap) and the entry reports as unresolvable instead of pending.
+RECHECK_EXPIRY_DAYS = 7
 
 
 def _screen_symbols() -> list[str]:
@@ -90,16 +97,81 @@ def apply_earnings_cross_check(row: dict,
         row["earnings_check"] = "clear — no past report on record"
 
 
+def _completed_bar_verdict(df, session: date) -> dict | None:
+    """Completed-bar move and volume verdict for the bar dated `session`.
+    None when that bar (or a prior close to react against) isn't in the
+    history — a fetch gap, not a judgment."""
+    dates = [d.date() if hasattr(d, "date") else d for d in df.index]
+    if session not in dates:
+        return None
+    idx = dates.index(session)
+    if idx < 1:
+        return None
+    prior_close = float(df["Close"].iloc[idx - 1])
+    bar = df.iloc[idx]
+    pre = df.iloc[max(0, idx - 20):idx]
+    avg_vol = float(pre["Volume"].mean()) if len(pre) else 0.0
+    ratio = round(float(bar["Volume"]) / avg_vol, 2) if avg_vol else 0.0
+    return {
+        "move_pct": round(100 * (float(bar["Close"]) / prior_close - 1), 2),
+        "volume_ratio": ratio,
+        "volume_verdict": volume_verdict(ratio, FULL_SESSION),
+    }
+
+
+def resolve_pending_movers(
+    pending: list[dict], history: dict, today: date,
+    now: datetime | None = None,
+) -> tuple[list[dict], list[dict]]:
+    """Re-judge prior scans' undetermined partial-floor movers on their
+    now-completed bars.
+
+    "Undetermined — re-check tomorrow" used to be a promise the system
+    could not keep: the screener only surfaces TODAY's movers, so a name
+    that didn't move 5% again never reappeared and its verdict expired
+    silently (CNH 2026-09-02, +9.5% on a 1.86x floor, never re-checked).
+    Returns (resolved rows for the report, entries still pending)."""
+    resolved, still_pending = [], []
+    for entry in pending:
+        session = date.fromisoformat(entry["session"])
+        if not session_complete(session, now):
+            still_pending.append(entry)  # same-session rescan; nothing new
+            continue
+        df = history.get(entry["symbol"])
+        verdict = _completed_bar_verdict(df, session) if df is not None else None
+        row = dict(entry)
+        if verdict is None:
+            if (today - session).days > RECHECK_EXPIRY_DAYS:
+                row["status"] = ("expired — no completed bar within "
+                                 f"{RECHECK_EXPIRY_DAYS}d; unresolvable")
+                resolved.append(row)
+            else:
+                still_pending.append(entry)  # fetch gap; retry next scan
+            continue
+        row.update(verdict)  # move_pct is now the completed-bar measurement
+        row["status"] = "resolved on completed bar"
+        resolved.append(row)
+    return resolved, still_pending
+
+
 def scan_movers(risk_config: dict, min_move_pct: float = 5.0,
                 earnings_exclusion_days: int = 5,
                 today: date | None = None,
-                now: datetime | None = None) -> dict:
+                now: datetime | None = None,
+                state_dir: Path | None = None) -> dict:
     today = today or date.today()
     floors = {
         "min_adv": float(risk_config["min_avg_dollar_volume"]),
         "min_price": float(risk_config.get("min_price", 5.0)),
         "min_move_pct": min_move_pct,
     }
+
+    # Prior scans' undetermined partial-floor movers, owed a completed-bar
+    # verdict. On a screener outage the file is left untouched so nothing
+    # pending is lost — those verdicts just wait one more scan.
+    pending_path = state_dir / "pending_movers.json" if state_dir else None
+    pending = (json.loads(pending_path.read_text())
+               if pending_path and pending_path.exists() else [])
 
     symbols = _screen_symbols()
     if not symbols:
@@ -111,7 +183,9 @@ def scan_movers(risk_config: dict, min_move_pct: float = 5.0,
         r.symbol for r in recent_reporters(earnings_exclusion_days, today=today)
     }
 
-    history = fetch_history(symbols, period="3mo")
+    fetch_syms = list(dict.fromkeys(
+        symbols + [p["symbol"] for p in pending]))
+    history = fetch_history(fetch_syms, period="3mo")
     candidates, rejected = [], []
     for sym in symbols:
         df = history.get(sym)
@@ -133,12 +207,13 @@ def scan_movers(risk_config: dict, min_move_pct: float = 5.0,
             # it reads as "no conviction" — 2026-08-20's entry window returned
             # 18 movers with every volume_ratio under 1.2x, which is not a
             # quiet tape, it is a partial numerator over a full denominator.
-            complete = session_complete(
-                df.index[-1].date() if hasattr(df.index[-1], "date")
-                else df.index[-1], now)
+            bar_date = (df.index[-1].date() if hasattr(df.index[-1], "date")
+                        else df.index[-1])
+            complete = session_complete(bar_date, now)
             ratio = round(float(last["Volume"]) / avg_vol, 2) if avg_vol else 0.0
             basis = FULL_SESSION if complete else PARTIAL_SESSION
             row.update({
+                "session": bar_date.isoformat(),
                 "last_close": round(float(last["Close"]), 4),
                 "move_pct": move_pct,
                 "volume_ratio": ratio,
@@ -166,10 +241,31 @@ def scan_movers(risk_config: dict, min_move_pct: float = 5.0,
         (candidates if not rejects else rejected).append(row)
 
     candidates.sort(key=lambda c: c["move_pct"], reverse=True)
+
+    recheck, still_pending = resolve_pending_movers(pending, history, today, now)
+    fresh = [
+        {"symbol": c["symbol"], "session": c["session"],
+         "move_pct": c["move_pct"], "volume_ratio_floor": c["volume_ratio"]}
+        for c in candidates if c.get("volume_verdict") == UNDETERMINED
+    ]
+    # Keyed by (symbol, session): a same-day rescan replaces the earlier
+    # snapshot with the higher floor rather than duplicating it.
+    keep = {(p["symbol"], p["session"]): p for p in still_pending}
+    for f in fresh:
+        keep[(f["symbol"], f["session"])] = f
+    if pending_path is not None:
+        pending_path.parent.mkdir(parents=True, exist_ok=True)
+        pending_path.write_text(json.dumps(list(keep.values()), indent=2))
+
     return {
         "scanned": len(symbols),
         "passing": len(candidates),
         "candidates": candidates,
         "rejected": [{"symbol": r["symbol"], "rejects": r["rejects"]}
                      for r in rejected],
+        # Completed-bar verdicts for prior scans' undetermined floors —
+        # UNCONFIRMED here is the negative call those floors deferred.
+        "prior_session_recheck": recheck,
+        "pending_recheck": sorted(
+            f"{p['symbol']} {p['session']}" for p in keep.values()),
     }

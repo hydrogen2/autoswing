@@ -26,12 +26,19 @@ def _dispatch_data(config, journal: Journal, args):
         return {"symbol": args.symbol.upper(),
                 "next_earnings_date": next_earnings_date(args.symbol)}
     if args.command == "scan-movers":
+        from ..config import PROJECT_ROOT
         from ..data.movers import scan_movers
 
-        result = scan_movers(config.risk, min_move_pct=args.min_move)
+        result = scan_movers(config.risk, min_move_pct=args.min_move,
+                             state_dir=PROJECT_ROOT / "state" / "shadow")
         journal.record("shadow.scan_movers", scanned=result["scanned"],
                        passing=result["passing"],
-                       symbols=[c["symbol"] for c in result["candidates"]])
+                       symbols=[c["symbol"] for c in result["candidates"]],
+                       prior_session_recheck=[
+                           {k: r.get(k) for k in ("symbol", "session",
+                                                  "volume_verdict", "status")}
+                           for r in result.get("prior_session_recheck", [])],
+                       pending_recheck=result.get("pending_recheck", []))
         return result
     if args.command == "shadow-mark":
         from .shadow import _shadow_mark
