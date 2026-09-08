@@ -21,7 +21,7 @@ DATA_COMMANDS = (
     "forecast-log", "forecast-score", "forecast-stats",
     "exit-counterfactuals", "log-skip", "skip-outcomes", "fill-quality",
     "backtest", "lesson-pending", "lesson-log", "lessons", "trim-compare",
-    "signal-log", "signal-score", "signal-stats",
+    "signal-log", "signal-score", "signal-stats", "signal-ingest",
 )
 
 
@@ -223,6 +223,19 @@ def _build_parser() -> argparse.ArgumentParser:
         "(immutable). Actionable date is derived, never supplied.",
     )
     sl.add_argument("signal", help="signal JSON path, or '-' for stdin")
+
+    si = sub.add_parser(
+        "signal-ingest",
+        help="external-signal ledger: pull famous filers' disclosed stakes "
+        "from EDGAR (SC 13D/G, ~10d lag) and 13F changes (~45d lag, a "
+        "control). Dated at the FILING date. Measurement only.",
+    )
+    si.add_argument("--days", type=int, default=120,
+                    help="look back this many days for filings")
+    si.add_argument("--kind", choices=["stakes", "holdings", "both"],
+                    default="stakes")
+    si.add_argument("--dry-run", action="store_true",
+                    help="report what would be logged without writing")
 
     sub.add_parser(
         "signal-score",

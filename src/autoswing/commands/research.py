@@ -90,6 +90,8 @@ def _dispatch_data(config, journal: Journal, args):
         return _backtest(config, journal, args)
     if args.command == "trim-compare":
         return _trim_compare(journal, args)
+    if args.command == "signal-ingest":
+        return _signal_ingest(journal, args)
     if args.command == "signal-log":
         return _signal_log(args, journal)
     if args.command == "signal-score":
@@ -257,6 +259,123 @@ def _signal_paths():
     from ..config import PROJECT_ROOT
     d = PROJECT_ROOT / "state" / "signals"
     return d / "signals.jsonl", d / "scores.jsonl"
+
+
+def _signal_ingest(journal: Journal, args):
+    """Pull disclosed stakes/holdings from EDGAR into the signal ledger.
+
+    Everything is dated at the FILING date — the first moment the position
+    was public. Anything earlier would credit us with knowledge no follower
+    had, which is exactly how copy-trade backtests invent returns."""
+    from datetime import date, datetime, timedelta, timezone
+
+    from ..config import PROJECT_ROOT
+    from ..edgar import (
+        HOLDINGS_FORMS, STAKE_FORMS, WATCHLIST, holdings_13f, new_or_increased,
+        recent_filings, subject_company, ticker_map,
+    )
+    from ..signals import (
+        append_jsonl, load_jsonl, next_tradeable_session, signal_id,
+    )
+
+    since = date.today() - timedelta(days=args.days)
+    spath, _ = _signal_paths()
+    existing = {s["id"] for s in load_jsonl(spath)}
+    tmap = ticker_map(PROJECT_ROOT / "state" / "signals" / "ticker_map.json")
+
+    logged, skipped, unmapped, forms_seen = [], 0, [], set()
+
+    if args.kind in ("stakes", "both"):
+        for cik, label in WATCHLIST.items():
+            for f in recent_filings(cik, STAKE_FORMS, since, forms_seen):
+                subj = subject_company(f)
+                if not subj:
+                    unmapped.append({"filer": label, "form": f.form,
+                                     "date": f.filing_date,
+                                     "why": "subject company not parsed"})
+                    continue
+                name, subj_cik = subj
+                # A filer disclosing about ITSELF (buybacks, subsidiary
+                # structure) is not a signal about anyone's stock picking.
+                if subj_cik == cik:
+                    unmapped.append({"filer": label, "subject": name,
+                                     "date": f.filing_date,
+                                     "why": "self-filing, not a pick"})
+                    continue
+                # An AMENDMENT (/A) can report an increased, reduced, or
+                # exited stake — the form alone does not say which. Calling
+                # them all "buy" would have made two-thirds of the first
+                # ingest directionally unknown. Only INITIAL 13D/13G filings
+                # are unambiguous ("crossed 5%", i.e. accumulated). Parsing
+                # amendment percentages is future work, not a guess.
+                if f.form.strip().endswith("/A"):
+                    unmapped.append({"filer": label, "subject": name,
+                                     "date": f.filing_date,
+                                     "why": "amendment — direction unknown "
+                                            "without parsing the percentage"})
+                    continue
+                ticker = tmap.get(subj_cik)
+                if not ticker:
+                    # Not an exchange-listed operating company we can price.
+                    unmapped.append({"filer": label, "subject": name,
+                                     "date": f.filing_date,
+                                     "why": "no ticker for CIK"})
+                    continue
+                source = f"stake_{label}"
+                sid = signal_id(source, ticker, f.filing_date)
+                if sid in existing:
+                    skipped += 1
+                    continue
+                entry = {
+                    "id": sid, "source": source, "symbol": ticker,
+                    "direction": "buy", "signal_date": f.filing_date,
+                    "actionable_date": next_tradeable_session(
+                        date.fromisoformat(f.filing_date)).isoformat(),
+                    "benchmark": "SPY",
+                    "note": f"{f.form} on {name} by {f.filer} — INITIAL "
+                            f">5% stake crossing, ~10d disclosure deadline",
+                    "logged_at": datetime.now(timezone.utc).isoformat(
+                        timespec="seconds"),
+                }
+                append_jsonl(spath, entry)
+                existing.add(sid)
+                logged.append({"source": source, "symbol": ticker,
+                               "signal_date": f.filing_date, "subject": name})
+
+    if args.kind in ("holdings", "both"):
+        # 13F is the CONTROL arm: 45-day lag by construction. Expect ~zero
+        # alpha; a large positive reading should discredit the instrument
+        # before it flatters the strategy.
+        for cik, label in WATCHLIST.items():
+            fs = sorted(recent_filings(cik, HOLDINGS_FORMS, since),
+                        key=lambda f: f.filing_date)
+            for prev_f, curr_f in zip(fs, fs[1:]):
+                prev, curr = holdings_13f(prev_f), holdings_13f(curr_f)
+                if not curr:
+                    unmapped.append({"filer": label, "date": curr_f.filing_date,
+                                     "why": "13F table not parsed"})
+                    continue
+                for chg in new_or_increased(prev, curr):
+                    unmapped.append({"filer": label, "issuer": chg["issuer"],
+                                     "date": curr_f.filing_date,
+                                     "why": "13F reports CUSIP; no free "
+                                            "CUSIP->ticker map"})
+
+    result = {
+        "logged": len(logged), "already_present": skipped,
+        "unmapped": len(unmapped),
+        "signals": logged[:40],
+        "unmapped_detail": unmapped[:20],
+        "forms_seen": sorted(forms_seen)[:12],
+        "note": "13D/G subject companies map exactly via CIK. 13F holdings "
+                "report CUSIPs with no free ticker map, so they are counted "
+                "as unmapped rather than guessed — an unmatched filing must "
+                "never read as 'they bought nothing'.",
+    }
+    if not args.dry_run:
+        journal.record("signals.ingested", logged=len(logged),
+                       unmapped=len(unmapped), kind=args.kind)
+    return result
 
 
 def _signal_log(args, journal: Journal):
