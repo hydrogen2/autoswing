@@ -219,15 +219,20 @@ class RiskGate:
         check("short_selling", (not is_short) or bool(cfg.get("allow_short", False)),
               "short entry" if is_short else "long entry")
 
-        # 3. Market hours (regular session only; no holiday calendar yet).
+        # 3. Market hours — holiday- and early-close-aware since 2026-09-08.
+        # Was clock-only until Labor Day 09-07 proved it: the rule PASSED all
+        # session on a fully closed market, and only the brain's own calendar
+        # knowledge stood the system down. Refusal belongs here, not there.
+        # A calendar past its coverage raises, and the rule fails CLOSED.
+        from .calendar import CalendarExpired, is_market_open
+
         et_now = now.astimezone(ET)
-        in_rth = (
-            et_now.weekday() < 5
-            and (et_now.hour, et_now.minute) >= (9, 30)
-            and et_now.hour < 16
-        )
-        check("market_hours", in_rth or bool(cfg.get("allow_outside_rth", False)),
-              f"now={et_now:%Y-%m-%d %H:%M %Z}")
+        try:
+            open_now, why = is_market_open(et_now)
+        except CalendarExpired as e:
+            open_now, why = False, str(e)
+        check("market_hours", open_now or bool(cfg.get("allow_outside_rth", False)),
+              f"now={et_now:%Y-%m-%d %H:%M %Z} — {why}")
 
         # 4. Risk per trade: distance to stop * quantity vs budget.
         risk_budget = virtual * float(cfg["risk_per_trade_pct"]) / 100.0
