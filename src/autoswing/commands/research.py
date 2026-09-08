@@ -18,6 +18,10 @@ def _dispatch_data(config, journal: Journal, args):
             price_data_missing=result["price_data_missing"],
             price_data_missing_symbols=result["price_data_missing_symbols"],
             symbols=[c["symbol"] for c in result["candidates"]],
+            # Instrument #8 needs a durable dated record to regress against
+            # drift at ~100 candidates; stdout is not a ledger.
+            insider_buying={c["symbol"]: c.get("insider_buying")
+                            for c in result["candidates"]},
         )
         return result
     if args.command == "next-earnings":

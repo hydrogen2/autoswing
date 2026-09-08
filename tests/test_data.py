@@ -488,3 +488,120 @@ class TestResolveNextExDividend:
     def test_empty_is_none(self):
         from autoswing.data.earnings import resolve_next_ex_dividend
         assert resolve_next_ex_dividend([], date(2026, 9, 8)) == "none"
+
+
+class TestInsiderEnrichment:
+    """Instrument #8 (green-lit 2026-09-08): Form 4 cluster buys as a
+    measurement-only field on passing candidates. No network here — the
+    EDGAR layer is stubbed; these pin caching and failure honesty."""
+
+    def _stub_edgar(self, monkeypatch, calls):
+        import autoswing.edgar as edgar
+        from autoswing.edgar import InsiderBuy
+
+        def fake_purchases(cik, since, max_filings=10):
+            calls.append(cik)
+            buy = InsiderBuy(owner="DOE JANE", roles=["director"],
+                             transaction_date="2026-09-02", shares=1000,
+                             price_per_share=44.1, filing_date="2026-09-04")
+            return [buy], {"filings_seen": 1, "filings_fetched": 1,
+                           "filings_unreadable": 0, "truncated": False,
+                           "any_10b5_1": False}
+
+        monkeypatch.setattr(edgar, "cik_for_ticker", lambda t, cache=None: 123)
+        monkeypatch.setattr(edgar, "form4_purchases", fake_purchases)
+
+    def test_summary_shape_and_lookback(self, tmp_path, monkeypatch):
+        from autoswing.data.candidates import insider_enrichment
+        calls = []
+        self._stub_edgar(monkeypatch, calls)
+        s = insider_enrichment("HTHT", date(2026, 9, 8), state_dir=tmp_path)
+        assert s["buys"] == 1 and s["cluster"] is False
+        assert s["lookback_days"] == 90
+        assert s["est_notional_usd"] == 44100
+
+    def test_second_call_same_day_hits_cache(self, tmp_path, monkeypatch):
+        # scan-candidates runs in the hourly healthchecks; only the first
+        # scan of a day may pay the EDGAR fetch.
+        from autoswing.data.candidates import insider_enrichment
+        calls = []
+        self._stub_edgar(monkeypatch, calls)
+        first = insider_enrichment("HTHT", date(2026, 9, 8), state_dir=tmp_path)
+        second = insider_enrichment("HTHT", date(2026, 9, 8), state_dir=tmp_path)
+        assert len(calls) == 1
+        assert second == first
+
+    def test_stale_cache_refetches_next_day(self, tmp_path, monkeypatch):
+        from autoswing.data.candidates import insider_enrichment
+        calls = []
+        self._stub_edgar(monkeypatch, calls)
+        insider_enrichment("HTHT", date(2026, 9, 8), state_dir=tmp_path)
+        insider_enrichment("HTHT", date(2026, 9, 9), state_dir=tmp_path)
+        assert len(calls) == 2
+
+    def test_fetch_failure_reads_unavailable_and_retries(
+        self, tmp_path, monkeypatch
+    ):
+        # An EDGAR outage must be visible ({"unavailable": ...}), must not
+        # poison the cache, and must not break the scan.
+        import autoswing.edgar as edgar
+        from autoswing.data.candidates import insider_enrichment
+        monkeypatch.setattr(edgar, "cik_for_ticker", lambda t, cache=None: 123)
+        attempts = []
+
+        def boom(cik, since, max_filings=10):
+            attempts.append(cik)
+            raise OSError("edgar down")
+
+        monkeypatch.setattr(edgar, "form4_purchases", boom)
+        s1 = insider_enrichment("HTHT", date(2026, 9, 8), state_dir=tmp_path)
+        s2 = insider_enrichment("HTHT", date(2026, 9, 8), state_dir=tmp_path)
+        assert "unavailable" in s1 and "edgar down" in s1["unavailable"]
+        assert len(attempts) == 2  # failure was not cached
+
+    def test_unmapped_ticker_is_a_named_reason(self, tmp_path, monkeypatch):
+        import autoswing.edgar as edgar
+        from autoswing.data.candidates import insider_enrichment
+        monkeypatch.setattr(edgar, "cik_for_ticker",
+                            lambda t, cache=None: None)
+        s = insider_enrichment("ZZZZ", date(2026, 9, 8), state_dir=tmp_path)
+        assert s == {"unavailable": "no unambiguous CIK for ticker"}
+
+
+class TestScanInsiderWiring:
+    def test_passing_candidates_carry_the_field(self, monkeypatch):
+        import autoswing.data.candidates as candidates
+        sentinel = {"buys": 2, "cluster": True}
+        monkeypatch.setattr(candidates, "recent_reporters",
+                            lambda days_back, today=None: [make_report()])
+        monkeypatch.setattr(candidates, "fetch_history",
+                            lambda syms: {"T": object()})
+        monkeypatch.setattr(candidates, "reaction_metrics",
+                            lambda sym, df, d, timing: make_reaction())
+        result = candidates.scan(
+            {"min_avg_dollar_volume": 5_000_000, "min_price": 5.0},
+            today=date(2026, 9, 8),
+            insider_enrich=lambda sym, today: sentinel,
+        )
+        assert result["passing"] == 1
+        assert result["candidates"][0]["insider_buying"] is sentinel
+
+    def test_rejected_candidates_skip_the_fetch(self, monkeypatch):
+        # Enrichment is per PASSING candidate; a rejected symbol must not
+        # cost an EDGAR round-trip.
+        import autoswing.data.candidates as candidates
+        fetched = []
+        monkeypatch.setattr(candidates, "recent_reporters",
+                            lambda days_back, today=None: [make_report()])
+        monkeypatch.setattr(candidates, "fetch_history",
+                            lambda syms: {"T": object()})
+        monkeypatch.setattr(
+            candidates, "reaction_metrics",
+            lambda sym, df, d, timing: make_reaction(move_pct=-4.0))
+        result = candidates.scan(
+            {"min_avg_dollar_volume": 5_000_000, "min_price": 5.0},
+            today=date(2026, 9, 8),
+            insider_enrich=lambda sym, today: fetched.append(sym),
+        )
+        assert result["passing"] == 0
+        assert fetched == []

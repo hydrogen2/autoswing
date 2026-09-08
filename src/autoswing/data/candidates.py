@@ -7,8 +7,10 @@ re-checks everything (defense in depth).
 
 from __future__ import annotations
 
+import json
 from dataclasses import asdict
-from datetime import date
+from datetime import date, timedelta
+from pathlib import Path
 
 from .earnings import Report, recent_reporters
 from .prices import Reaction, fetch_history, reaction_metrics
@@ -76,8 +78,66 @@ def build_candidate(report: Report, reaction: Reaction | None, floors: dict,
     return c
 
 
+# Insider window: wide enough to catch the post-print open-window buys AND
+# accumulation in the weeks before the report; transaction dates ride along
+# in the ledger so the regression can slice it finer.
+FORM4_LOOKBACK_DAYS = 90
+
+
+def insider_enrichment(symbol: str, today: date,
+                       state_dir: Path | None = None) -> dict:
+    """Form 4 cluster-buying summary for ONE passing candidate
+    (research instrument #8; green-lit 2026-09-08, measurement-only).
+
+    Never raises and never returns nothing: every failure comes back as
+    {"unavailable": reason} so an EDGAR outage is distinguishable from
+    "no insider bought". Results are cached per (symbol, day) in
+    state/edgar/ because scan-candidates also runs in the hourly
+    healthchecks — only the first scan of a day pays the fetch.
+    """
+    from .. import edgar
+
+    if state_dir is None:
+        from ..config import PROJECT_ROOT
+        state_dir = PROJECT_ROOT / "state" / "edgar"
+    cache_file = state_dir / "form4-cache.json"
+    key = symbol.upper()
+    cache: dict = {}
+    try:
+        if cache_file.exists():
+            cache = json.loads(cache_file.read_text())
+    except Exception:
+        cache = {}
+    hit = cache.get(key)
+    if hit and hit.get("fetched") == today.isoformat():
+        return hit["summary"]
+
+    try:
+        cik = edgar.cik_for_ticker(key, state_dir / "tickers.json")
+        if cik is None:
+            summary = {"unavailable": "no unambiguous CIK for ticker"}
+        else:
+            buys, meta = edgar.form4_purchases(
+                cik, today - timedelta(days=FORM4_LOOKBACK_DAYS))
+            summary = edgar.insider_summary(buys, meta)
+            summary["lookback_days"] = FORM4_LOOKBACK_DAYS
+    except Exception as e:
+        # Not cached: a transient EDGAR failure should retry next run.
+        return {"unavailable": f"{type(e).__name__}: {e}"}
+
+    cache[key] = {"fetched": today.isoformat(), "summary": summary}
+    try:
+        state_dir.mkdir(parents=True, exist_ok=True)
+        tmp = cache_file.with_suffix(".tmp")
+        tmp.write_text(json.dumps(cache, indent=2))
+        tmp.replace(cache_file)
+    except Exception:
+        pass  # a failed cache write costs a refetch, never the result
+    return summary
+
+
 def scan(risk_config: dict, days_back: int = 3, min_move_pct: float = 3.0,
-         today: date | None = None) -> dict:
+         today: date | None = None, insider_enrich=None) -> dict:
     floors = {
         "min_avg_dollar_volume": float(risk_config["min_avg_dollar_volume"]),
         "min_price": float(risk_config.get("min_price", 5.0)),
@@ -101,6 +161,11 @@ def scan(risk_config: dict, days_back: int = 3, min_move_pct: float = 3.0,
 
     passing = [c for c in candidates if not c["rejects"]]
     passing.sort(key=lambda c: abs(c["reaction"]["move_pct"]), reverse=True)
+    # Measurement-only field on PASSING candidates (the population whose
+    # drift we can later join). Floors and rejects never read it.
+    enrich = insider_enrich or insider_enrichment
+    for c in passing:
+        c["insider_buying"] = enrich(c["symbol"], today or date.today())
     # Surfaced so a shrinking candidate list is attributable to a data outage
     # rather than read as "nothing qualified today".
     no_prices = sorted(s for s in by_symbol if s not in history)

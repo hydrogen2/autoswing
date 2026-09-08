@@ -218,3 +218,137 @@ def match_ticker(issuer: str, tmap: dict[int, str],
     key = re.sub(r"\s+", " ", key)
     hits = [t for n, t in names.items() if n == key]
     return hits[0] if len(hits) == 1 else None
+
+
+# --- Form 4: insider open-market buying (research instrument #8) ----------
+#
+# Measurement-only enrichment for PEAD candidates: does cluster buying by
+# insiders predict drift? Nothing here influences a decision until ~100
+# candidates carry the field and the regression has spoken.
+#
+# Only form "4" exactly. Amendments (4/A) RESTATE a filing that was already
+# counted; matching both would double a buy. Skipping them can miss a buy
+# first disclosed in an amendment — accepted: undercounting is recoverable
+# at analysis time, double-counting silently inflates the signal.
+FORM4_FORMS = re.compile(r"^4$")
+
+# Only transaction code P (open-market purchase) with acquired code A.
+# Everything else on a Form 4 — option exercises (M), awards (A), sales (S),
+# gifts (G) — is compensation plumbing or disposal, not conviction.
+PURCHASE_CODE = "P"
+
+
+@dataclass
+class InsiderBuy:
+    owner: str
+    roles: list[str]           # director / officer / 10%-owner
+    transaction_date: str
+    shares: float
+    price_per_share: float | None
+    filing_date: str
+
+
+def _xml_value(tag: str, block: str) -> str | None:
+    # Bound the <value> search inside the tag's OWN element: a tag holding
+    # only a footnoteId must read as None, not as the next element's value.
+    m = re.search(rf"<{tag}>(.*?)</{tag}>", block, re.S)
+    if not m:
+        return None
+    v = re.search(r"<value>\s*([^<]*?)\s*</value>", m.group(1))
+    return (v.group(1) or None) if v else None
+
+
+def parse_form4(xml: str, filing_date: str) -> tuple[list[InsiderBuy], bool]:
+    """Open-market purchases from one Form 4 document.
+
+    Returns (buys, is_10b5_1_plan). Joint filings list several reporting
+    owners over the SAME transactions (spouses, trusts); only the first
+    owner is credited so a joint filing never counts as a cluster by itself.
+    The 10b5-1 checkbox matters because a scheduled plan buy carries far
+    less information than a discretionary one — the flag rides along so the
+    regression can split them.
+    """
+    m = re.search(r"<rptOwnerName>\s*(.*?)\s*</rptOwnerName>", xml)
+    owner = m.group(1) if m else "unknown"
+    roles = []
+    for tag, role in (("isDirector", "director"), ("isOfficer", "officer"),
+                      ("isTenPercentOwner", "10%-owner")):
+        if re.search(rf"<{tag}>\s*(1|true)\s*</{tag}>", xml):
+            roles.append(role)
+    plan = bool(re.search(r"<aff10b5One>\s*(1|true)\s*</aff10b5One>", xml))
+
+    buys = []
+    for block in re.findall(
+            r"<nonDerivativeTransaction>(.*?)</nonDerivativeTransaction>",
+            xml, re.S):
+        code = re.search(r"<transactionCode>\s*(\w)\s*</transactionCode>", block)
+        if not code or code.group(1) != PURCHASE_CODE:
+            continue
+        if _xml_value("transactionAcquiredDisposedCode", block) != "A":
+            continue
+        shares = _xml_value("transactionShares", block)
+        if shares is None:
+            continue
+        price = _xml_value("transactionPricePerShare", block)
+        buys.append(InsiderBuy(
+            owner=owner, roles=roles,
+            transaction_date=_xml_value("transactionDate", block) or filing_date,
+            shares=float(shares),
+            price_per_share=float(price) if price else None,
+            filing_date=filing_date,
+        ))
+    return buys, plan
+
+
+def form4_purchases(cik: int, since: date,
+                    max_filings: int = 10) -> tuple[list[InsiderBuy], dict]:
+    """All open-market buys filed on Form 4 since a date, newest first.
+
+    The meta dict counts what happened — filings seen vs fetched vs
+    unparsed, and whether the list was truncated — so a caller can tell
+    "no insider bought" apart from "we didn't look hard enough". A silent
+    partial read here would be the renders-as-benign family again.
+    """
+    filings = recent_filings(cik, FORM4_FORMS, since)
+    meta = {"filings_seen": len(filings), "filings_fetched": 0,
+            "filings_unreadable": 0,
+            "truncated": len(filings) > max_filings, "any_10b5_1": False}
+    buys: list[InsiderBuy] = []
+    for f in filings[:max_filings]:
+        url = (f"https://www.sec.gov/Archives/edgar/data/{f.cik}/"
+               f"{f.acc_nodash}/{f.accession}.txt")
+        try:
+            body = _get(url)
+        except Exception:
+            meta["filings_unreadable"] += 1
+            continue
+        meta["filings_fetched"] += 1
+        b, plan = parse_form4(body, f.filing_date)
+        meta["any_10b5_1"] = meta["any_10b5_1"] or plan
+        buys.extend(b)
+    return buys, meta
+
+
+def insider_summary(buys: list[InsiderBuy], meta: dict) -> dict:
+    """One JSON-able record per candidate. `cluster` is the hypothesis
+    being tested: >=2 DISTINCT insiders buying in the window."""
+    owners = sorted({b.owner for b in buys})
+    return {
+        "buys": len(buys),
+        "distinct_insiders": len(owners),
+        "cluster": len(owners) >= 2,
+        "total_shares": round(sum(b.shares for b in buys), 2),
+        "est_notional_usd": round(sum(
+            b.shares * b.price_per_share for b in buys if b.price_per_share)),
+        "latest_transaction": max(
+            (b.transaction_date for b in buys), default=None),
+        "roles": sorted({r for b in buys for r in b.roles}),
+        **meta,
+    }
+
+
+def cik_for_ticker(ticker: str, cache: Path | None = None) -> int | None:
+    """Exact ticker -> CIK, or None. Refuses ambiguity like match_ticker."""
+    hits = [cik for cik, t in ticker_map(cache).items()
+            if t.upper() == ticker.upper()]
+    return hits[0] if len(hits) == 1 else None
