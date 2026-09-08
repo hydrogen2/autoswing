@@ -455,3 +455,36 @@ class TestReactionContradictsSurprise:
         r = make_report(surprise_pct=-85.7)
         build_candidate(r, make_reaction(move_pct=14.9), FLOORS)
         assert r.quality_flags == []
+
+
+class TestResolveNextExDividend:
+    """Pure decision for the per-position ex-div surface (HTHT 2026-09-08:
+    an unadjusted stop fired on the ex-div gap; the date must be visible)."""
+
+    def test_future_date_surfaces(self):
+        from autoswing.data.earnings import resolve_next_ex_dividend
+        assert resolve_next_ex_dividend(
+            [date(2026, 9, 10)], date(2026, 9, 8)) == "2026-09-10"
+
+    def test_today_still_counts_as_upcoming(self):
+        # The gap lands at TODAY's open — exactly when the trap fires.
+        from autoswing.data.earnings import resolve_next_ex_dividend
+        assert resolve_next_ex_dividend(
+            [date(2026, 9, 8)], date(2026, 9, 8)) == "2026-09-08"
+
+    def test_past_date_is_behind_us(self):
+        # Yahoo keeps the most recent PAST ex-div until the next is
+        # declared; a past date is not a warning.
+        from autoswing.data.earnings import resolve_next_ex_dividend
+        assert resolve_next_ex_dividend(
+            [date(2026, 6, 15)], date(2026, 9, 8)) == "none"
+
+    def test_nearest_future_wins(self):
+        from autoswing.data.earnings import resolve_next_ex_dividend
+        assert resolve_next_ex_dividend(
+            [date(2026, 12, 10), date(2026, 9, 10)],
+            date(2026, 9, 8)) == "2026-09-10"
+
+    def test_empty_is_none(self):
+        from autoswing.data.earnings import resolve_next_ex_dividend
+        assert resolve_next_ex_dividend([], date(2026, 9, 8)) == "none"

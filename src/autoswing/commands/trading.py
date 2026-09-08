@@ -162,7 +162,7 @@ def _propose_trade(broker: Broker, args):
 def _manage_positions(broker: Broker, enforce: bool, meta_path=None):
     from datetime import date
 
-    from ..data.earnings import next_earnings_date
+    from ..data.earnings import next_earnings_date, next_ex_dividend_date
     from ..manage import PositionMeta, evaluate_position, load_meta, save_meta
 
     meta_path = meta_path or _meta_path()
@@ -249,6 +249,9 @@ def _manage_positions(broker: Broker, enforce: bool, meta_path=None):
         mark, avg = pos.get("market_price"), pos.get("avg_cost")
         entry = {"symbol": sym, "action": action, "detail": detail,
                  "next_earnings": ned, "enforced": False,
+                 # Ex-div gaps mechanically trade through unadjusted stops
+                 # (HTHT 2026-09-08); the brain must see the date coming.
+                 "next_ex_dividend": next_ex_dividend_date(sym),
                  "mark": mark,
                  "unrealized_pnl": pos.get("unrealized_pnl"),
                  "unrealized_pct": (round(100.0 * (mark - avg) / avg, 2)
@@ -346,6 +349,27 @@ def _merge_benchmark_entry(existing, entry):
     return list(by_date.values())
 
 
+def _regime_tags(hist) -> tuple[dict, list[str]]:
+    """Regime tags for the daily mark, plus the names of any that could not
+    be computed. Joined to trades post-hoc for conditional-performance
+    research ("does PEAD pay in storms?"). Passive collection only — but a
+    missing input must surface as a named gap, never as a silently thinner
+    row (the yfinance batch drops symbols on bad days; see _fetch_with_retry).
+    """
+    regime, gaps = {}, []
+    if "SPY" in hist and len(hist["SPY"]) >= 20:
+        spy = hist["SPY"]["Close"].astype(float)
+        regime["spy_vs_20dma_pct"] = round(
+            100 * (float(spy.iloc[-1]) / float(spy.tail(20).mean()) - 1), 2)
+    else:
+        gaps.append("spy_vs_20dma_pct")
+    if "^VIX" in hist and len(hist["^VIX"]):
+        regime["vix_close"] = round(float(hist["^VIX"]["Close"].iloc[-1]), 2)
+    else:
+        gaps.append("vix_close")
+    return regime, gaps
+
+
 def _benchmark_mark(broker: Broker):
     import os
     from datetime import date
@@ -369,15 +393,9 @@ def _benchmark_mark(broker: Broker):
     hist = fetch_history([bench_sym, "SPY", "^VIX"], period="3mo")
     bench_close = float(hist[bench_sym]["Close"].iloc[-1]) if bench_sym in hist else None
 
-    # Regime tags: joined to trades post-hoc for conditional-performance
-    # research ("does PEAD pay in storms?"). Passive collection only.
-    regime = {}
-    if "SPY" in hist and len(hist["SPY"]) >= 20:
-        spy = hist["SPY"]["Close"].astype(float)
-        regime["spy_vs_20dma_pct"] = round(
-            100 * (float(spy.iloc[-1]) / float(spy.tail(20).mean()) - 1), 2)
-    if "^VIX" in hist and len(hist["^VIX"]):
-        regime["vix_close"] = round(float(hist["^VIX"]["Close"].iloc[-1]), 2)
+    regime, gaps = _regime_tags(hist)
+    if bench_close is None:
+        gaps.append("benchmark_close")
 
     path = PROJECT_ROOT / "state" / "benchmark.jsonl"
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -396,6 +414,13 @@ def _benchmark_mark(broker: Broker):
         "kill_tripped": status["kill_tripped"],
         **regime,
     }
+    if gaps:
+        # A fetch failure must not render as "no field" — on 2026-09-08 the
+        # SPY download failed and the day's row silently lost its regime tag,
+        # indistinguishable from a row written before the tag existed. The
+        # gap is recorded in the row itself so the post-hoc regime join can
+        # count it instead of misreading it.
+        entry["regime_gaps"] = gaps
     if first and first.get("benchmark_close") and bench_close:
         entry["bot_return_pct"] = round(
             100 * (status["virtual_equity"] / first["virtual_equity"] - 1), 2

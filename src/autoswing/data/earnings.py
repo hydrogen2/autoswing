@@ -203,6 +203,42 @@ def next_earnings_date(symbol: str) -> str:
     return resolve_next_earnings(known, stamped, now_et)
 
 
+def next_ex_dividend_date(symbol: str) -> str:
+    """Next ex-dividend date as YYYY-MM-DD, 'none', or 'unknown'.
+
+    Surfaced per position so a protective stop sitting within gap distance
+    of a dividend is visible BEFORE the open mechanically trades through it
+    (HTHT 2026-09-08: an $0.87/ADS ex-div gap fired an unadjusted stop).
+    'none' means no upcoming date is declared — Yahoo keeps the most recent
+    past ex-div until the next is announced, and a past date is behind us.
+    'unknown' means the lookup failed; never conflate the two.
+    """
+    import yfinance as yf
+
+    try:
+        raw = (yf.Ticker(symbol).calendar or {}).get("Ex-Dividend Date")
+    except Exception:
+        return "unknown"
+    found = raw if isinstance(raw, (list, tuple)) else [raw]
+    dates = []
+    for x in found:
+        if isinstance(x, datetime):
+            dates.append(x.date())
+        elif isinstance(x, date):
+            dates.append(x)
+        elif hasattr(x, "date") and callable(x.date):  # pandas.Timestamp
+            dates.append(x.date())
+    return resolve_next_ex_dividend(dates, datetime.now(ET).date())
+
+
+def resolve_next_ex_dividend(dates: list[date], today: date) -> str:
+    """Pure decision over fetched ex-div dates (unit-testable without
+    yfinance). Ex-div TODAY still counts as upcoming: the gap lands at
+    today's open, which is exactly when the stop trap fires."""
+    future = sorted(d for d in dates if d >= today)
+    return future[0].isoformat() if future else "none"
+
+
 def resolve_next_earnings(known: list[date], stamped: list[datetime],
                           now_et: datetime) -> str:
     """Pure decision over the fetched dates (unit-testable without yfinance).

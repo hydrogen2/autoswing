@@ -49,6 +49,13 @@ class StubBroker:
         return {"closed": symbol}
 
 
+@pytest.fixture(autouse=True)
+def _no_exdiv_network(monkeypatch):
+    # next_ex_dividend_date hits yfinance; tests stay hermetic.
+    import autoswing.data.earnings as earnings
+    monkeypatch.setattr(earnings, "next_ex_dividend_date", lambda sym: "none")
+
+
 @pytest.fixture
 def meta_path(tmp_path):
     path = tmp_path / "positions.json"
@@ -224,3 +231,44 @@ class TestPerPositionMarks:
         assert entry["mark"] is None
         assert entry["unrealized_pnl"] is None
         assert entry["unrealized_pct"] is None
+
+
+class TestExDividendSurfacing:
+    """2026-09-08: HTHT's $0.87/ADS ex-div gap at the open mechanically
+    traded through its unadjusted $44.40 stop. The stop itself is placed by
+    the brain, so the fix here is visibility: every managed position's
+    review row must carry the next declared ex-dividend date."""
+
+    def test_exdiv_date_reported_per_position(
+        self, journal, meta_path, monkeypatch
+    ):
+        import autoswing.data.earnings as earnings
+        monkeypatch.setattr(earnings, "next_earnings_date",
+                            lambda sym: "2026-10-13")
+        monkeypatch.setattr(earnings, "next_ex_dividend_date",
+                            lambda sym: "2026-09-10")
+        broker = StubBroker(
+            journal,
+            positions=[{"symbol": "PENG", "quantity": 96.0, "avg_cost": 76.21}],
+            open_orders=PENG_ORDERS,
+        )
+        result = _manage_positions(broker, enforce=False, meta_path=meta_path)
+        assert result["positions"][0]["next_ex_dividend"] == "2026-09-10"
+
+    def test_lookup_failure_reads_unknown_not_none(
+        self, journal, meta_path, monkeypatch
+    ):
+        # 'unknown' (lookup failed) and 'none' (nothing declared) must stay
+        # distinguishable — conflating them is the renders-as-benign family.
+        import autoswing.data.earnings as earnings
+        monkeypatch.setattr(earnings, "next_earnings_date",
+                            lambda sym: "2026-10-13")
+        monkeypatch.setattr(earnings, "next_ex_dividend_date",
+                            lambda sym: "unknown")
+        broker = StubBroker(
+            journal,
+            positions=[{"symbol": "PENG", "quantity": 96.0, "avg_cost": 76.21}],
+            open_orders=PENG_ORDERS,
+        )
+        result = _manage_positions(broker, enforce=False, meta_path=meta_path)
+        assert result["positions"][0]["next_ex_dividend"] == "unknown"
