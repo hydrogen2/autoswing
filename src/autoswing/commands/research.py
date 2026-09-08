@@ -90,6 +90,25 @@ def _dispatch_data(config, journal: Journal, args):
         return _backtest(config, journal, args)
     if args.command == "trim-compare":
         return _trim_compare(journal, args)
+    if args.command == "signal-log":
+        return _signal_log(args, journal)
+    if args.command == "signal-score":
+        return _signal_score(journal)
+    if args.command == "signal-stats":
+        from ..signals import aggregate, load_jsonl
+
+        scores = load_jsonl(_signal_paths()[1])
+        if args.source:
+            scores = [s for s in scores if s["source"] == args.source]
+        return {"scored": len(scores), "by_source": aggregate(scores),
+                "caveats": [
+                    "alpha is measured from the NEXT session's close after "
+                    "disclosure, never the price at the moment of the post",
+                    "entries only — disclosure is asymmetric, so this asks "
+                    "'did the entry predict drift', not 'does copying pay'",
+                    "picking whose signals to follow is itself a selection "
+                    "on a noisy track record",
+                ]}
     if args.command == "lesson-pending":
         return _lesson_pending(config, journal)
     if args.command == "lesson-log":
@@ -232,6 +251,84 @@ def _trim_compare(journal: Journal, args):
                                  "mean_dd_saved_pts")}
                             for k, v in out.items()})
     return result
+
+
+def _signal_paths():
+    from ..config import PROJECT_ROOT
+    d = PROJECT_ROOT / "state" / "signals"
+    return d / "signals.jsonl", d / "scores.jsonl"
+
+
+def _signal_log(args, journal: Journal):
+    """Record an external signal. The actionable date is DERIVED from the
+    trading calendar, never taken from the payload — that number is the whole
+    experiment's integrity and must not be suppliable by whoever logs it."""
+    from datetime import date, datetime, timezone
+
+    from ..signals import (
+        append_jsonl, load_jsonl, next_tradeable_session, signal_id,
+        validate_signal,
+    )
+
+    raw = sys.stdin.read() if args.signal == "-" else open(args.signal).read()
+    payload = json.loads(raw)
+    errs = validate_signal(payload)
+    if errs:
+        raise ValueError("invalid signal: " + "; ".join(errs))
+
+    source = payload["source"].strip().lower()
+    symbol = payload["symbol"].strip().upper()
+    sid = signal_id(source, symbol, payload["signal_date"])
+    spath, _ = _signal_paths()
+    if any(s["id"] == sid for s in load_jsonl(spath)):
+        raise ValueError(f"signal {sid} already logged — signals are "
+                         "immutable, the first record stands")
+
+    entry = {
+        "id": sid, "source": source, "symbol": symbol,
+        "direction": payload["direction"],
+        "signal_date": payload["signal_date"],
+        "actionable_date": next_tradeable_session(
+            date.fromisoformat(payload["signal_date"])).isoformat(),
+        "benchmark": (payload.get("benchmark") or "SPY").strip().upper(),
+        "note": payload["note"].strip(),
+        "logged_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    }
+    append_jsonl(spath, entry)
+    journal.record("signals.logged", **entry)
+    return {"logged": sid, "actionable_date": entry["actionable_date"],
+            "benchmark": entry["benchmark"]}
+
+
+def _signal_score(journal: Journal):
+    from ..data.prices import fetch_history
+    from ..signals import append_jsonl, load_jsonl, score_signal
+
+    spath, scpath = _signal_paths()
+    signals = load_jsonl(spath)
+    done = {s["signal_id"] for s in load_jsonl(scpath)}
+    pending = [s for s in signals if s["id"] not in done]
+    if not pending:
+        return {"scored": 0, "pending": 0, "total": len(signals)}
+
+    syms = sorted({s["symbol"] for s in pending}
+                  | {s.get("benchmark", "SPY") for s in pending})
+    hist = fetch_history(syms, period="1y")
+
+    scored, still = [], 0
+    for sig in pending:
+        df = hist.get(sig["symbol"])
+        if df is None:
+            still += 1
+            continue
+        row = score_signal(sig, df, hist.get(sig.get("benchmark", "SPY")))
+        if row is None:
+            still += 1          # no horizon elapsed yet; try again later
+            continue
+        append_jsonl(scpath, row)
+        scored.append(row)
+    journal.record("signals.scored", scored=len(scored), still_pending=still)
+    return {"scored": len(scored), "pending": still, "results": scored}
 
 
 def _lessons_path():

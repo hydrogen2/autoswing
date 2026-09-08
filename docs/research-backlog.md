@@ -16,6 +16,7 @@ zero new capital risk, and answer a named decision.
 | 6 | Regime tags in benchmark marks | 2026-08-06 | Does PEAD pay only in calm tapes? (analysis at ~50 trades) |
 | 7 | Fill-quality baseline | 2026-08-31 | What does paper slippage translate to live? (28 fills: mean +44bps vs limit, paper-flattered) |
 | 8 | Insider-buying enrichment | 2026-09-08 | Does Form 4 cluster buying predict drift? (measurement-only to ~100 candidates) |
+| 9 | External-signal ledger | 2026-09-08 | Does following anyone's disclosed buys beat their own benchmark? (sources: insider Form 4, congress, hand-logged accounts) |
 
 ## Queued (not started)
 
@@ -48,6 +49,15 @@ zero new capital risk, and answer a named decision.
   research item, but it came out of the same review loop.
 
 ## Retired / rejected
+
+- Tweet-parsing a specific account (Serenity / @aleabitoreddit) — REJECTED
+  2026-09-08 as its own book. Unstructured input, entries announced loudly
+  while exits go quiet (so any parser inherits a hold-the-losers bias), and
+  one public test already found an equal-weight portfolio of his calls
+  underperformed SPY and XLK. If we want him measured, hand-log his calls
+  into the external-signal ledger — measurement does not require automation,
+  and a parser is only worth building for a signal that has already shown
+  something.
 
 - Prediction-market venues (Polymarket etc.) — illegal to access from
   Singapore; unverifiable claims; wrong venue class for this project

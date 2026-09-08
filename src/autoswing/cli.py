@@ -21,6 +21,7 @@ DATA_COMMANDS = (
     "forecast-log", "forecast-score", "forecast-stats",
     "exit-counterfactuals", "log-skip", "skip-outcomes", "fill-quality",
     "backtest", "lesson-pending", "lesson-log", "lessons", "trim-compare",
+    "signal-log", "signal-score", "signal-stats",
 )
 
 
@@ -215,6 +216,26 @@ def _build_parser() -> argparse.ArgumentParser:
     tc.add_argument("symbols", help="comma-separated, e.g. CRDO,RKLB,MU,VRT")
     tc.add_argument("--days", type=int, default=730)
     tc.add_argument("--shares", type=int, default=100)
+
+    sl = sub.add_parser(
+        "signal-log",
+        help="external-signal ledger: record someone else's disclosed call "
+        "(immutable). Actionable date is derived, never supplied.",
+    )
+    sl.add_argument("signal", help="signal JSON path, or '-' for stdin")
+
+    sub.add_parser(
+        "signal-score",
+        help="external-signal ledger: score signals whose horizons have "
+        "elapsed, as alpha vs each signal's own benchmark",
+    )
+
+    ss = sub.add_parser(
+        "signal-stats",
+        help="external-signal ledger: per-source scoreboard (mean alpha and "
+        "hit rate at 5/15/60 sessions)",
+    )
+    ss.add_argument("--source", default=None)
 
     sub.add_parser(
         "lesson-pending",
