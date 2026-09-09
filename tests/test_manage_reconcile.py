@@ -105,6 +105,37 @@ class TestBlankSnapshotGuard:
         assert load_meta(meta_path) == {}
         assert "manage.position_closed" in _events(journal)
 
+    def test_pending_entry_labeled_not_suspect(self, journal, meta_path):
+        # DELL 2026-09-03..09-09: a resting bracket (working BUY entry +
+        # exit legs, no fill) is not a broken snapshot — it must render as
+        # a pending entry, keep its metadata, and never be enforced.
+        orders = [
+            {"order_id": 14, "symbol": "PENG", "action": "BUY", "type": "LMT",
+             "quantity": 96.0, "limit_price": 76.2, "stop_price": 0.0,
+             "status": "PreSubmitted"},
+        ] + PENG_ORDERS
+        broker = StubBroker(journal, positions=[], open_orders=orders)
+        result = _manage_positions(broker, enforce=False, meta_path=meta_path)
+
+        assert "manage.pending_entry" in _events(journal)
+        assert "manage.snapshot_suspect" not in _events(journal)
+        assert "manage.position_closed" not in _events(journal)
+        assert "PENG" in load_meta(meta_path)
+        (entry,) = result["positions"]
+        assert entry["action"] == "hold"
+        assert "pending entry" in entry["detail"]
+
+    def test_pending_entry_never_enforced(self, journal, meta_path):
+        orders = [
+            {"order_id": 14, "symbol": "PENG", "action": "BUY", "type": "LMT",
+             "quantity": 96.0, "limit_price": 76.2, "stop_price": 0.0,
+             "status": "PreSubmitted"},
+        ] + PENG_ORDERS
+        broker = StubBroker(journal, positions=[], open_orders=orders)
+        _manage_positions(broker, enforce=True, meta_path=meta_path)
+        assert broker.closed == []
+        assert "PENG" in load_meta(meta_path)
+
     def test_unexpected_short_flagged_not_held(self, journal, meta_path):
         # 2026-07-14: the blanked book's orphaned stop (order 16) sold 96
         # PENG into a flat account, leaving a naked short. The old code

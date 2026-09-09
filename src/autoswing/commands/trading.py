@@ -170,6 +170,13 @@ def _manage_positions(broker: Broker, enforce: bool, meta_path=None):
     snapshot = broker.get_positions()
     held = {p["symbol"]: p for p in snapshot["positions"] if p["quantity"] != 0}
     working = {o["symbol"] for o in snapshot["open_orders"]}
+    # A working BUY can only be an unfilled entry (a fill removes the
+    # entry order), so it separates "bracket placed, no fill yet" from a
+    # genuinely missing position. Partial-fill-plus-blank-feed collapses
+    # into this label too; both branches skip management, so the
+    # conservative outcome is identical either way.
+    working_buys = {o["symbol"] for o in snapshot["open_orders"]
+                    if o["action"] == "BUY"}
 
     # Long-only strategy: a negative broker quantity is never ours by
     # intent (e.g. an orphaned stop selling into a book the gateway had
@@ -188,8 +195,21 @@ def _manage_positions(broker: Broker, enforce: bool, meta_path=None):
     # (conservative: their time-box starts now, and they still get the
     # earnings check like everything else).
     suspect = set()
+    pending = set()
     for sym in list(meta):
         if sym not in held:
+            if sym in working_buys:
+                # Not a position yet — the entry order is still live
+                # (DELL 09-03..09-09 rendered as the alarming "snapshot
+                # suspect" for four sessions). Nothing to manage until it
+                # fills; the reconciler tracks the resting bracket.
+                pending.add(sym)
+                broker.journal.record(
+                    "manage.pending_entry", symbol=sym,
+                    detail="entry order still working, no fill yet; "
+                           "nothing to manage",
+                )
+                continue
             if sym in working:
                 # Position missing while its exit orders are still live is
                 # impossible for a real close (a bracket fill cancels the
@@ -230,6 +250,14 @@ def _manage_positions(broker: Broker, enforce: bool, meta_path=None):
     # been closed, risking later positions left un-enforced or orphaned.
     for sym, m in list(meta.items()):
         if sym in shorts:
+            continue
+        if sym in pending:
+            report.append({
+                "symbol": sym, "action": "hold",
+                "detail": "pending entry: BUY order still working, not "
+                          "filled; nothing to manage yet",
+                "next_earnings": None, "enforced": False,
+            })
             continue
         if sym in suspect:
             report.append({
