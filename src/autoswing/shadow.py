@@ -24,6 +24,15 @@ from daily bars; resolving ties against the strategy means shadow results
 understate rather than flatter. Entry price is the delayed quote at proposal
 time (falls back to the entry limit).
 
+The ENTRY day is special: the position opens mid-session, so that bar's
+extremes include pre-entry action that cannot be ordered against the entry
+(2026-09-09: wide ASO was "stopped" by a low printed before the live mirror
+entry even existed). The close is the one print a daily bar guarantees came
+after the entry, and the entry is inside the bracket — so a day-0 close at
+or through a bracket level proves that level was crossed post-entry. Day-0
+therefore fills only on the CLOSE crossing a level; an intraday touch that
+closes back inside the bracket holds until the next session.
+
 Promotion decision (owner): compare the shadow ledger's realized stats
 against the live PEAD ledger after the shadow season. This module never
 touches the broker.
@@ -118,6 +127,15 @@ def mark_position(
         if d < opened or d > today:
             continue
         bar = df.loc[ts]
+        if d == opened:
+            # Mid-session entry: the bar's extremes can't be ordered
+            # against the entry, only the close is provably post-entry
+            # (see module docstring). Stop-first ordering preserved.
+            if float(bar["Close"]) <= pos.stop_loss:
+                return _close(pos, d, pos.stop_loss, "stop")
+            if float(bar["Close"]) >= pos.take_profit:
+                return _close(pos, d, pos.take_profit, "target")
+            continue
         if float(bar["Low"]) <= pos.stop_loss:
             return _close(pos, d, pos.stop_loss, "stop")
         if float(bar["High"]) >= pos.take_profit:

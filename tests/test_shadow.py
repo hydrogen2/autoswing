@@ -33,22 +33,22 @@ class TestMarking:
         assert mark_position(pos(), df, date(2026, 8, 11), 15) is None
 
     def test_stop_hit(self):
-        df = make_df([(100, 102, 94, 96)])
-        e = mark_position(pos(), df, date(2026, 8, 10), 15)
+        df = make_df([(100, 104, 98, 101), (100, 102, 94, 96)])
+        e = mark_position(pos(), df, date(2026, 8, 11), 15)
         assert e["reason"] == "stop"
         assert e["exit_price"] == 95.0
         assert e["pnl"] == pytest.approx((95 - 100) * 48)
 
     def test_target_hit(self):
-        df = make_df([(100, 113, 99, 111)])
-        e = mark_position(pos(), df, date(2026, 8, 10), 15)
+        df = make_df([(100, 104, 98, 101), (100, 113, 99, 111)])
+        e = mark_position(pos(), df, date(2026, 8, 11), 15)
         assert e["reason"] == "target"
         assert e["pnl"] == pytest.approx((112 - 100) * 48)
 
     def test_ambiguous_bar_resolves_stop_first(self):
         # Low breaches stop AND high reaches target: conservatism wins.
-        df = make_df([(100, 115, 94, 108)])
-        e = mark_position(pos(), df, date(2026, 8, 10), 15)
+        df = make_df([(100, 104, 98, 101), (100, 115, 94, 108)])
+        e = mark_position(pos(), df, date(2026, 8, 11), 15)
         assert e["reason"] == "stop"
 
     def test_timebox_closes_at_close(self):
@@ -57,6 +57,47 @@ class TestMarking:
         e = mark_position(pos(), df, date(2026, 9, 5), 15)
         assert e["reason"] == "timebox"
         assert e["exit_price"] == 101.0
+
+    def test_entry_day_pre_entry_low_does_not_stop(self):
+        # 2026-09-09 wide-ASO regression: the entry-day low printed before
+        # the mid-session entry existed; the close back inside the bracket
+        # proves nothing post-entry — the position must stay open.
+        df = make_df([(100, 102, 94, 96)])
+        assert mark_position(pos(), df, date(2026, 8, 10), 15) is None
+
+    def test_entry_day_touch_of_target_does_not_fill(self):
+        # Same ambiguity on the upside: an intraday target touch with a
+        # close inside the bracket holds until the next session.
+        df = make_df([(100, 113, 99, 111)])
+        assert mark_position(pos(), df, date(2026, 8, 10), 15) is None
+
+    def test_entry_day_close_through_stop_fills(self):
+        # Entry is above the stop, so a day-0 close at/through the stop
+        # proves the stop was crossed after entry.
+        df = make_df([(100, 102, 93, 94)])
+        e = mark_position(pos(), df, date(2026, 8, 10), 15)
+        assert e["reason"] == "stop"
+        assert e["exit_price"] == 95.0
+
+    def test_entry_day_close_through_target_fills(self):
+        df = make_df([(100, 115, 99, 113)])
+        e = mark_position(pos(), df, date(2026, 8, 10), 15)
+        assert e["reason"] == "target"
+        assert e["exit_price"] == 112.0
+
+    def test_entry_day_close_through_both_resolves_stop_first(self):
+        # Degenerate close-at-stop with a target touch earlier in the bar:
+        # stop-first conservatism applies on day 0 too.
+        df = make_df([(100, 115, 94, 95)])
+        e = mark_position(pos(), df, date(2026, 8, 10), 15)
+        assert e["reason"] == "stop"
+
+    def test_next_session_full_bar_logic_resumes(self):
+        # Day 0 ambiguous touch holds; day 1 low touch stops normally.
+        df = make_df([(100, 102, 94, 96), (96, 98, 94.5, 97)])
+        e = mark_position(pos(), df, date(2026, 8, 11), 15)
+        assert e["reason"] == "stop"
+        assert e["closed"] == "2026-08-11"
 
     def test_bars_before_open_ignored(self):
         # A pre-entry crash bar must not close the position.
