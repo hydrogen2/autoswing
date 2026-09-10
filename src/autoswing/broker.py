@@ -17,6 +17,11 @@ from .journal import Journal
 DELAYED = 3
 DELAYED_FROZEN = 4
 
+# Codes where IB refuses the market-data request outright — no tick will
+# ever arrive. 354 = not subscribed; 10197 = no market data during a
+# competing live session (the owner's login holds the shared data seat).
+DATA_DENIED_CODES = {354, 10197}
+
 
 @dataclass
 class BracketProposal:
@@ -41,6 +46,8 @@ class Broker:
         # the structured record — not loose stderr wording — is what gets
         # cross-checked.
         self.ib.errorEvent += self._on_api_message
+        # Denials noticed mid-poll, keyed by contract symbol (see get_quote).
+        self._data_denied: dict[str, str] = {}
 
     def _on_api_message(self, reqId, errorCode, errorString, contract) -> None:
         self.journal.record(
@@ -50,6 +57,8 @@ class Broker:
             message=errorString,
             symbol=contract.symbol if contract is not None else None,
         )
+        if errorCode in DATA_DENIED_CODES and contract is not None:
+            self._data_denied[contract.symbol] = f"{errorCode}: {errorString}"
 
     # -- lifecycle -----------------------------------------------------------
 
@@ -136,6 +145,7 @@ class Broker:
 
     def get_quote(self, symbol: str) -> dict:
         contract = self._qualified_stock(symbol)
+        self._data_denied.pop(contract.symbol, None)
         # Streaming (not snapshot): snapshot requests ignore delayed-frozen
         # mode and come back empty without a real-time subscription.
         # Delayed data ticks in within ~10s; poll then cancel.
@@ -143,6 +153,12 @@ class Broker:
         for _ in range(30):
             self.ib.sleep(0.5)
             if any(_num(v) is not None for v in (ticker.last, ticker.close, ticker.bid)):
+                break
+            # A denial (e.g. 10197 competing live session) means no tick is
+            # coming; sitting out the full poll would journal an all-null
+            # quote that reads like a quiet market instead of a refusal
+            # (2026-09-09/10, the renders-as-benign family).
+            if contract.symbol in self._data_denied:
                 break
         quote = {
             "symbol": symbol.upper(),
@@ -153,6 +169,9 @@ class Broker:
             "volume": _num(ticker.volume),
             "market_data_type": ticker.marketDataType,  # 3=delayed
         }
+        denial = self._data_denied.pop(contract.symbol, None)
+        if denial and quote["bid"] is None and quote["last"] is None and quote["close"] is None:
+            quote["error"] = denial
         self.ib.cancelMktData(contract)
         self.journal.record("broker.get_quote", result=quote)
         return quote
