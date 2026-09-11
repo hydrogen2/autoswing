@@ -264,6 +264,100 @@ class TestPerPositionMarks:
         assert entry["unrealized_pct"] is None
 
 
+class TestBracketLegHealth:
+    """2026-09-11: HPE's take-profit limit (57.80) sat PreSubmitted and
+    unfilled all session with the stock above 60 — the leg was stuck at the
+    broker, the sibling stop presumably dead too, and every review row
+    still rendered a healthy 'hold'. A mark beyond a live exit level while
+    the position remains open is impossible for a working bracket; it must
+    flag loudly (and never trade — order surgery is the owner's call)."""
+
+    def _broker(self, journal, mark):
+        return StubBroker(
+            journal,
+            positions=[{"symbol": "PENG", "quantity": 96.0, "avg_cost": 76.21,
+                        "market_price": mark, "unrealized_pnl": 0.0}],
+            open_orders=PENG_ORDERS,
+        )
+
+    @pytest.fixture(autouse=True)
+    def _earnings(self, monkeypatch):
+        import autoswing.data.earnings as earnings
+        monkeypatch.setattr(earnings, "next_earnings_date",
+                            lambda sym: "2026-10-13")
+
+    @pytest.fixture
+    def meta_path(self, tmp_path):
+        # Fresh position (inside the time-box) so the review action is a
+        # plain hold and the alert is isolated from timebox/earnings exits.
+        from datetime import date
+        path = tmp_path / "positions.json"
+        save_meta(path, {
+            "PENG": PositionMeta(
+                symbol="PENG", placed_date=date.today().isoformat(),
+                entry_limit=76.2, stop_loss=71.0, take_profit=86.6,
+                rationale="test",
+            )
+        })
+        return path
+
+    def test_mark_beyond_take_profit_flags(self, journal, meta_path):
+        # take_profit 86.6, mark 90 — a marketable sell limit that did not
+        # fill; the exit path is broken.
+        result = _manage_positions(
+            self._broker(journal, 90.0), enforce=False, meta_path=meta_path)
+        entry = result["positions"][0]
+        assert entry["bracket_alert"] is not None
+        assert "take-profit" in entry["bracket_alert"]
+        assert entry["action"] == "hold"  # flag, never act
+        assert "manage.bracket_alert" in _events(journal)
+
+    def test_mark_below_stop_flags(self, journal, meta_path):
+        # stop 71.0, mark 68 — the stop never fired; unprotected position.
+        result = _manage_positions(
+            self._broker(journal, 68.0), enforce=False, meta_path=meta_path)
+        entry = result["positions"][0]
+        assert entry["bracket_alert"] is not None
+        assert "stop" in entry["bracket_alert"]
+        assert "manage.bracket_alert" in _events(journal)
+
+    def test_mark_inside_bracket_no_alert(self, journal, meta_path):
+        result = _manage_positions(
+            self._broker(journal, 80.0), enforce=False, meta_path=meta_path)
+        assert result["positions"][0]["bracket_alert"] is None
+        assert "manage.bracket_alert" not in _events(journal)
+
+    def test_exact_touch_within_margin_no_alert(self, journal, meta_path):
+        # Trading exactly at the limit does not guarantee a fill (queue
+        # priority); an exact touch must not flap the alert.
+        result = _manage_positions(
+            self._broker(journal, 86.6), enforce=False, meta_path=meta_path)
+        assert result["positions"][0]["bracket_alert"] is None
+
+    def test_missing_mark_no_alert(self, journal, meta_path):
+        broker = StubBroker(
+            journal,
+            positions=[{"symbol": "PENG", "quantity": 96.0, "avg_cost": 76.21}],
+            open_orders=PENG_ORDERS,
+        )
+        result = _manage_positions(broker, enforce=False, meta_path=meta_path)
+        assert result["positions"][0]["bracket_alert"] is None
+
+    def test_adopted_zero_levels_no_alert(self, journal, tmp_path):
+        # Adopted positions carry stop/target 0.0 — "no level" must never
+        # read as "level breached".
+        empty_meta = tmp_path / "positions.json"
+        broker = StubBroker(
+            journal,
+            positions=[{"symbol": "PENG", "quantity": 96.0, "avg_cost": 76.21,
+                        "market_price": 80.0, "unrealized_pnl": 0.0}],
+            open_orders=[],
+        )
+        result = _manage_positions(broker, enforce=False, meta_path=empty_meta)
+        assert result["positions"][0]["bracket_alert"] is None
+        assert "manage.bracket_alert" not in _events(journal)
+
+
 class TestExDividendSurfacing:
     """2026-09-08: HTHT's $0.87/ADS ex-div gap at the open mechanically
     traded through its unadjusted $44.40 stop. The stop itself is placed by

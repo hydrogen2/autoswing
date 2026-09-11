@@ -283,7 +283,30 @@ def _manage_positions(broker: Broker, enforce: bool, meta_path=None):
                  "mark": mark,
                  "unrealized_pnl": pos.get("unrealized_pnl"),
                  "unrealized_pct": (round(100.0 * (mark - avg) / avg, 2)
-                                    if mark and avg else None)}
+                                    if mark and avg else None),
+                 "bracket_alert": None}
+        # A mark trading beyond a live exit level while the position is
+        # still open means that leg did NOT execute when it should have
+        # (HPE 2026-09-11: sell limit 57.80 sat PreSubmitted all session
+        # with the stock above 60 — sibling stop presumed equally dead, so
+        # the position was unprotected while every review row rendered a
+        # healthy "hold"). The 0.25% margin absorbs an exact touch or a
+        # fill race. Flag and journal only: the leg may still fill, and
+        # order surgery is the owner's call, never automated here.
+        if mark:
+            if m.take_profit > 0 and mark > m.take_profit * 1.0025:
+                entry["bracket_alert"] = (
+                    f"mark {mark:g} beyond take-profit {m.take_profit:g} "
+                    "with position still open — exit leg likely stuck at "
+                    "the broker; verify both legs")
+            elif m.stop_loss > 0 and mark < m.stop_loss * 0.9975:
+                entry["bracket_alert"] = (
+                    f"mark {mark:g} beyond stop {m.stop_loss:g} with "
+                    "position still open — stop likely dead at the broker; "
+                    "position may be unprotected")
+        if entry["bracket_alert"]:
+            broker.journal.record("manage.bracket_alert", symbol=sym,
+                                  detail=entry["bracket_alert"])
         if enforce and action != "hold":
             entry["close_result"] = broker.close_position(sym)
             entry["enforced"] = True
