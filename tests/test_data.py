@@ -162,6 +162,28 @@ class TestReactionMetrics:
         report_day = df.index[25].date()
         r = reaction_metrics("T", df, report_day, "unknown")
         assert r.reaction_date == df.index[26].date().isoformat()
+        # The runner-up session rides along so the pick is auditable.
+        assert r.alt_day_date == report_day.isoformat()
+        assert r.alt_day_move_pct == 1.0
+
+    def test_unknown_timing_bounce_bigger_than_true_reaction(self):
+        # M 2026-09-10: fell 4.7% on the print, bounced 7.7% the next day.
+        # The bigger-move heuristic grades the bounce as the reaction; the
+        # true report-day selloff must survive as the alt-day fields.
+        closes = [100.0] * 25 + [95.3, 102.6]
+        df = make_df(closes)
+        report_day = df.index[25].date()
+        r = reaction_metrics("T", df, report_day, "unknown")
+        assert r.reaction_date == df.index[26].date().isoformat()
+        assert r.alt_day_date == report_day.isoformat()
+        assert r.alt_day_move_pct == -4.7
+
+    def test_known_timing_has_no_alt_day(self):
+        closes = [100.0] * 25 + [95.0, 108.0]
+        df = make_df(closes)
+        r = reaction_metrics("T", df, df.index[25].date(), "bmo")
+        assert r.alt_day_date is None
+        assert r.alt_day_move_pct is None
 
     def test_unknown_timing_waits_for_next_session(self):
         # Report day IS the last bar and timing is unknown, so the report may
@@ -455,6 +477,72 @@ class TestReactionContradictsSurprise:
         r = make_report(surprise_pct=-85.7)
         build_candidate(r, make_reaction(move_pct=14.9), FLOORS)
         assert r.quality_flags == []
+
+
+class TestAmbiguousReactionDay:
+    """M 2026-09-14: timing unknown, report-day -4.7% vs next-day +7.7% —
+    the bigger-move pick graded a sold-off beat as a confirmed +7.7%
+    reaction. When the rejected session also cleared the move floor, the
+    reaction day is a guess and must say so."""
+
+    def test_big_runner_up_move_flagged(self):
+        c = build_candidate(
+            make_report(),
+            make_reaction(move_pct=7.7, alt_day_date="2026-09-10",
+                          alt_day_move_pct=-4.7),
+            FLOORS,
+        )
+        assert "ambiguous_reaction_day" in c["quality_flags"]
+        assert c["rejects"] == []  # a flag, never a rejection
+
+    def test_small_runner_up_move_not_flagged(self):
+        c = build_candidate(
+            make_report(),
+            make_reaction(alt_day_date="2026-09-10", alt_day_move_pct=1.2),
+            FLOORS,
+        )
+        assert "ambiguous_reaction_day" not in c["quality_flags"]
+
+    def test_known_timing_not_flagged(self):
+        c = build_candidate(make_report(), make_reaction(), FLOORS)
+        assert "ambiguous_reaction_day" not in c["quality_flags"]
+
+    def test_no_reaction_tolerated(self):
+        c = build_candidate(make_report(), None, FLOORS)
+        assert "ambiguous_reaction_day" not in c["quality_flags"]
+
+
+class TestRecentReporters:
+    """The lookback must count TRADING days: calendar days minus weekends
+    shrank a Monday scan to Fri+Mon and dropped Thursday reporters — whose
+    reaction day was Friday — entirely (2026-09-14)."""
+
+    def fetched_days(self, monkeypatch, days_back, today):
+        from autoswing.data import earnings
+
+        seen = []
+        monkeypatch.setattr(
+            earnings, "fetch_calendar_day",
+            lambda day, session=None: seen.append(day) or [])
+        earnings.recent_reporters(days_back, today=today)
+        return seen
+
+    def test_monday_window_reaches_wednesday(self, monkeypatch):
+        seen = self.fetched_days(monkeypatch, 3, date(2026, 9, 14))
+        assert seen == [date(2026, 9, 14), date(2026, 9, 11),
+                        date(2026, 9, 10), date(2026, 9, 9)]
+
+    def test_holiday_skipped_not_counted(self, monkeypatch):
+        # Tue 2026-09-08 follows Labor Day: the window must hop the holiday
+        # AND the weekend, not spend lookback budget on them.
+        seen = self.fetched_days(monkeypatch, 3, date(2026, 9, 8))
+        assert seen == [date(2026, 9, 8), date(2026, 9, 4),
+                        date(2026, 9, 3), date(2026, 9, 2)]
+
+    def test_midweek_window_is_four_trading_days(self, monkeypatch):
+        seen = self.fetched_days(monkeypatch, 3, date(2026, 9, 10))
+        assert seen == [date(2026, 9, 10), date(2026, 9, 9),
+                        date(2026, 9, 8), date(2026, 9, 4)]
 
 
 class TestResolveNextExDividend:

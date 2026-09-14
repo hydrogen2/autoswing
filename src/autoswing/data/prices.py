@@ -79,6 +79,13 @@ class Reaction:
     # reaction bar is still trading. Compare it with volume_verdict(), which
     # confirms on a floor that already clears and defers only the negative.
     volume_basis: str = FULL_SESSION
+    # Set only when timing was unknown and both D and D+1 had traded: the
+    # session the bigger-move heuristic did NOT pick. A large runner-up move
+    # means the reaction-day choice was a coin toss between two real moves,
+    # not a measurement (M 2026-09-10: fell 4.7% on the print, bounced 7.7%
+    # the next day — the bounce won and graded a sold-off beat as confirmed).
+    alt_day_date: str | None = None
+    alt_day_move_pct: float | None = None
 
 
 def _download_batch(symbols: list[str], **window) -> dict[str, pd.DataFrame]:
@@ -145,6 +152,7 @@ def reaction_metrics(
     """Compute the post-report reaction. Returns None when the reaction
     day isn't in the data yet (e.g. after-close report, market not open)."""
     dates = [d.date() for d in df.index]
+    alt_idx: int | None = None
 
     if timing == "bmo":
         candidates = [i for i, d in enumerate(dates) if d >= report_date]
@@ -174,7 +182,10 @@ def reaction_metrics(
             move = lambda i: abs(
                 df["Close"].iloc[i] / df["Close"].iloc[i - 1] - 1
             )
-            candidates = [i_on if move(i_on) >= move(i_after) else i_after]
+            if move(i_on) >= move(i_after):
+                candidates, alt_idx = [i_on], i_after
+            else:
+                candidates, alt_idx = [i_after], i_on
 
     if not candidates:
         return None
@@ -192,6 +203,12 @@ def reaction_metrics(
     adv_dollar = float((pre["Close"] * pre["Volume"]).mean()) if len(pre) else 0.0
 
     last_close = float(df["Close"].iloc[-1])
+    alt_date = alt_move = None
+    if alt_idx is not None:
+        # alt_idx >= 1 always: i_on == 0 already returned, and i_after > i_on.
+        alt_prior = float(df["Close"].iloc[alt_idx - 1])
+        alt_date = dates[alt_idx].isoformat()
+        alt_move = round(100 * (float(df["Close"].iloc[alt_idx]) / alt_prior - 1), 2)
     return Reaction(
         symbol=symbol,
         reaction_date=dates[idx].isoformat(),
@@ -205,4 +222,6 @@ def reaction_metrics(
         days_since_reaction=len(df) - 1 - idx,
         volume_basis=(FULL_SESSION if session_complete(dates[idx], now)
                       else PARTIAL_SESSION),
+        alt_day_date=alt_date,
+        alt_day_move_pct=alt_move,
     )

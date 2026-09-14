@@ -14,6 +14,8 @@ from zoneinfo import ZoneInfo
 
 import requests
 
+from ..calendar import is_trading_day
+
 ET = ZoneInfo("America/New_York")
 
 NASDAQ_URL = "https://api.nasdaq.com/api/calendar/earnings"
@@ -156,17 +158,25 @@ def fetch_calendar_day(day: date, session: requests.Session | None = None) -> li
 
 
 def recent_reporters(days_back: int, today: date | None = None) -> list[Report]:
-    """Every report in the last `days_back` calendar days (weekdays only),
-    today included — after-close reporters from yesterday are this
-    morning's freshest candidates."""
+    """Every report in the last `days_back` TRADING days, today included —
+    after-close reporters from the prior session are this morning's
+    freshest candidates.
+
+    Counting calendar days and skipping weekends silently shrank the window
+    whenever it crossed one: a Monday scan at the default 3 covered only
+    Fri+Mon, so Thursday reporters — whose reaction day was Friday — never
+    appeared at all (2026-09-14: 0 candidates vs 10 on a wider window).
+    """
     today = today or date.today()
     session = requests.Session()
     reports: list[Report] = []
-    for offset in range(days_back + 1):
-        day = today - timedelta(days=offset)
-        if day.weekday() >= 5:
-            continue
-        reports.extend(fetch_calendar_day(day, session))
+    day = today
+    remaining = days_back + 1
+    while remaining > 0:
+        if is_trading_day(day):
+            reports.extend(fetch_calendar_day(day, session))
+            remaining -= 1
+        day -= timedelta(days=1)
     return reports
 
 

@@ -35,6 +35,17 @@ def build_candidate(report: Report, reaction: Reaction | None, floors: dict,
         and (report.surprise_pct > 0) != (reaction.move_pct > 0)
     ):
         flags.append("reaction_contradicts_surprise")
+    if (
+        reaction is not None
+        and reaction.alt_day_move_pct is not None
+        and abs(reaction.alt_day_move_pct) >= floors["min_reaction_move_pct"]
+    ):
+        # Timing unknown and the session we did NOT grade also moved a
+        # qualifying amount: the reaction day is a guess between two real
+        # moves. M 2026-09-10: -4.7% on the print, +7.7% bounce next day —
+        # the bounce won the bigger-move pick and a sold-off beat rendered
+        # as a +7.7% confirmed reaction. Verify report timing via news.
+        flags.append("ambiguous_reaction_day")
     c = {
         "symbol": report.symbol,
         "company": report.company,
