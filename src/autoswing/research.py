@@ -101,7 +101,9 @@ def simulate_exit(trade: LiveTrade, df, rule: dict,
     """Replay one trade under an exit rule against daily bars.
 
     rule: {name, target_r (None = no target), timebox_days,
-           trail_r (None = fixed stop; else trailing distance in R)}
+           trail_r (None = fixed stop; else trailing distance in R),
+           exhaust_day + exhaust_min_r (optional conditional exit: if the
+           trade has not reached exhaust_min_r by exhaust_day, close it)}
     Stop-first on ambiguous bars. Open trades marked at last close.
     """
     entry_d = date.fromisoformat(trade.entry_date)
@@ -128,8 +130,17 @@ def simulate_exit(trade: LiveTrade, df, rule: dict,
             return _cf_result(trade, d, stop, "stop")
         if target and float(bar["High"]) >= target:
             return _cf_result(trade, d, target, "target")
-        if trading_days_between(entry_d, d) >= rule["timebox_days"]:
+        held = trading_days_between(entry_d, d)
+        if held >= rule["timebox_days"]:
             return _cf_result(trade, d, last_close, "timebox")
+        # Conditional drift-exhaustion exit. Checked AFTER stop/target so a
+        # trade that already resolved today is not re-attributed, and on the
+        # CLOSE (not the intraday path) because the decision a live preclose
+        # window could actually make is "where is it now", never "where did
+        # it trade at some point today".
+        if rule.get("exhaust_day") and held >= rule["exhaust_day"]:
+            if (last_close - trade.entry) / risk <= rule["exhaust_min_r"]:
+                return _cf_result(trade, d, last_close, "exhausted")
         if rule.get("trail_r"):
             highest_close = max(highest_close, last_close)
             stop = max(stop, highest_close - rule["trail_r"] * risk)
@@ -155,6 +166,21 @@ EXIT_RULES = [
     {"name": "no target, 1R trailing stop", "target_r": None,
      "timebox_days": 15, "trail_r": 1.0},
     {"name": "tighter timebox (2R, 10d)", "target_r": 2.0, "timebox_days": 10},
+    # Proposed 2026-09-11, green-lit 09-15. Targets the documented
+    # winner-fade pattern: a position going nowhere by day 8 rarely starts
+    # drifting afterwards, so recycle the capital instead of waiting out
+    # the full time-box.
+    #
+    # PRE-REGISTERED SUCCESS CRITERIA (set before the first run so this
+    # cannot become a fishing expedition — the CRDO sweep lesson):
+    # this earns a LIVE change only if it beats baseline on BOTH avg_r AND
+    # total_pnl, AND the margin survives dropping the single best trade.
+    # Anything less is reported as "no case", not as a near miss. It is the
+    # FIFTH exit variant tested against ~30 trades; with enough variants one
+    # will look good by chance.
+    {"name": "drift-exhaustion (2R, 15d, exit <=+0.5R at day 8)",
+     "target_r": 2.0, "timebox_days": 15,
+     "exhaust_day": 8, "exhaust_min_r": 0.5},
 ]
 
 

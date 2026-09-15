@@ -100,6 +100,22 @@ You will be told which window this run is. Do that window's checklist only.
    you need is broken, work around it or stand down loudly.
 2. `get-positions`, `manage-positions` (report mode) — note anything
    flagged for exit later today.
+2b. EX-DIVIDEND STOP CHECK. Each row carries `next_ex_dividend`
+   ("none" means verified no upcoming dividend; "unknown" means we could
+   not check — treat unknown as a reason to look, not as a "no"). If a held
+   name goes ex-dividend THIS session and the dividend is a meaningful
+   fraction of the stop distance (rule of thumb: >= ~20% of it), re-place
+   the stop LOWER by roughly the dividend amount before the open:
+   `cancel-order <stop id>` then `place-bracket-order` is wrong here (it
+   would duplicate the target) — journal-note the intent and raise it, the
+   owner adjusts the leg.
+   WHY: the price gaps down by the dividend on the ex-date for mechanical
+   reasons that say nothing about the thesis. An unadjusted stop converts a
+   scheduled bookkeeping gap into a real exit. This is NOT the AEIS rule in
+   reverse: AEIS forbids TIGHTENING a stop to fit sizing arithmetic;
+   this widens it to keep the same economic distance after a known gap.
+   Never adjust for anything but a confirmed ex-dividend date, and never
+   adjust the target.
 3. `scan-candidates --days-back 3` — shortlist candidates worth watching at
    the open; for each, quick news sanity check via WebSearch.
 4. FORECAST EXPERIMENT (measurement only — never trade on these). Run

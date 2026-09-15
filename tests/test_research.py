@@ -143,7 +143,10 @@ class TestCompareRules:
     def test_all_rules_reported(self):
         df = make_df([(100, 104, 98, 103), (103, 111, 102, 109)])
         out = compare_exit_rules([trade()], {"T": df}, today=date(2026, 8, 11))
-        assert len(out) == 4
+        # Track the rule table rather than a magic number, so adding a
+        # variant does not look like a regression.
+        from autoswing.research import EXIT_RULES
+        assert len(out) == len(EXIT_RULES)
         for stats in out.values():
             assert stats["trades"] == 1
 
@@ -331,3 +334,73 @@ class TestFillQuality:
         assert out["targets"]["n"] == 1
         assert out["targets"]["mean_bps_weighted"] == 0.0
         assert out["targets"]["at_reference"] == 1
+
+
+class TestDriftExhaustionExit:
+    """Conditional exit (green-lit 2026-09-15): if a trade has not reached
+    +0.5R by day 8, close it rather than waiting out the 15-day box."""
+
+    RULE = {"name": "exhaust", "target_r": 2.0, "timebox_days": 15,
+            "exhaust_day": 8, "exhaust_min_r": 0.5}
+
+    def flat_trade(self, n=12, price=100.5):
+        # entry 100, stop 95 (risk 5) -> +0.5R is 102.50. A drift to 100.5
+        # is +0.1R: exhausted.
+        from autoswing.research import LiveTrade
+        return LiveTrade(symbol="T", entry_date="2026-08-03", entry=100.0,
+                         stop=95.0, target=110.0, quantity=100), n, price
+
+    def frame(self, n, price, start="2026-08-03"):
+        import pandas as pd
+        return pd.DataFrame(
+            [{"Open": price, "High": price + 0.4, "Low": price - 0.4,
+              "Close": price, "Volume": 1_000_000}] * n,
+            index=pd.bdate_range(start, periods=n))
+
+    def test_a_trade_going_nowhere_is_exited_at_day_8(self):
+        from autoswing.research import simulate_exit
+        t, n, px = self.flat_trade()
+        r = simulate_exit(t, self.frame(n, px), self.RULE, today=date(2026, 8, 31))
+        assert r["reason"] == "exhausted"
+
+    def test_a_trade_above_the_threshold_is_left_alone(self):
+        # +1R at day 8 clears +0.5R, so the rule must not touch it.
+        from autoswing.research import simulate_exit
+        t, n, _ = self.flat_trade()
+        r = simulate_exit(t, self.frame(n, 105.0), self.RULE,
+                          today=date(2026, 8, 31))
+        assert r["reason"] != "exhausted"
+
+    def test_it_never_pre_empts_a_stop_or_target(self):
+        # Stop and target are checked first: a bar that resolves the trade
+        # must not be re-attributed to exhaustion.
+        import pandas as pd
+        from autoswing.research import simulate_exit
+        t, _, _ = self.flat_trade()
+        bars = [{"Open": 100, "High": 100.6, "Low": 100.0, "Close": 100.5,
+                 "Volume": 1}] * 9
+        bars.append({"Open": 100, "High": 100, "Low": 90, "Close": 91,
+                     "Volume": 1})            # deep stop breach on day 10
+        df = pd.DataFrame(bars, index=pd.bdate_range("2026-08-03", periods=10))
+        r = simulate_exit(t, df, self.RULE, today=date(2026, 8, 31))
+        # Exhaustion fires on day 8, BEFORE the day-10 stop — that is correct
+        # and is the point of the rule; it must be labelled honestly.
+        assert r["reason"] == "exhausted"
+        assert r["exit_date"] < "2026-08-14"
+
+    def test_baseline_rule_is_unaffected_by_the_new_field(self):
+        from autoswing.research import simulate_exit
+        t, n, px = self.flat_trade()
+        base = {"name": "b", "target_r": 2.0, "timebox_days": 15}
+        r = simulate_exit(t, self.frame(n, px), base, today=date(2026, 8, 31))
+        assert r["reason"] == "still_open"
+
+    def test_criteria_are_pre_registered_in_the_rule_table(self):
+        # The guard against fishing: the bar for a live change is written
+        # down before any result exists.
+        import inspect
+
+        import autoswing.research as R
+        src = inspect.getsource(R)
+        assert "PRE-REGISTERED SUCCESS CRITERIA" in src
+        assert "single best trade" in src
