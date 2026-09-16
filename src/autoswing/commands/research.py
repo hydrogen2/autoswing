@@ -661,7 +661,7 @@ def _forecast_log(args, journal: Journal):
 def _forecast_score(journal: Journal):
     from datetime import date, datetime, timezone
 
-    from ..data.earnings import fetch_calendar_day
+    from ..data.earnings import fetch_calendar_day, reported_surprise
     from ..data.prices import fetch_history, reaction_metrics
     from ..forecast import (
         append_jsonl, awaiting_actuals, load_jsonl, score_forecast,
@@ -690,6 +690,16 @@ def _forecast_score(journal: Journal):
             }
         report = calendar_cache[key].get(f["symbol"])
         surprise = report.surprise_pct if report else None
+        if surprise is None and report and report.eps_actual is not None \
+                and report.eps_forecast:
+            surprise = (100.0 * (report.eps_actual - report.eps_forecast)
+                        / abs(report.eps_forecast))
+        if surprise is None:
+            # The day-rows are a pre-print source; actuals may never be
+            # backfilled (DSGX/LPTH 2026-09-10 burned as "unknown" on real
+            # prints). Ask the per-symbol history before the grace window
+            # can burn the leg.
+            surprise = reported_surprise(f["symbol"], rdate)
 
         df = history.get(f["symbol"])
         reaction = (reaction_metrics(f["symbol"], df, rdate, f["timing"])

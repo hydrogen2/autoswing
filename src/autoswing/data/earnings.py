@@ -213,6 +213,47 @@ def next_earnings_date(symbol: str) -> str:
     return resolve_next_earnings(known, stamped, now_et)
 
 
+def reported_surprise(symbol: str, report_date: date,
+                      window_days: int = 2) -> float | None:
+    """EPS surprise % from yfinance's per-symbol report history — the
+    scoring fallback when the Nasdaq day-rows never backfill actuals.
+
+    The calendar is a pre-print source: rows appear with forecasts, but
+    for some symbols `eps`/`surprise` stay 'N/A' forever after a real,
+    public print (DSGX/LPTH 2026-09-10 burned as eps_actual "unknown" six
+    days later). Matches within ±window_days because feeds disagree by a
+    day around AMC prints; derives the % from reported vs estimate rather
+    than trusting a provider's own surprise column. Returns None when no
+    complete row lands in the window — never a guess.
+    """
+    import math
+
+    import yfinance as yf
+
+    try:
+        df = yf.Ticker(symbol).get_earnings_dates(limit=12)
+    except Exception:
+        return None
+    if df is None:
+        return None
+    best: tuple[int, float, float] | None = None  # (gap, reported, estimate)
+    for ts, row in df.iterrows():
+        try:
+            gap = abs((ts.date() - report_date).days)
+            reported = float(row.get("Reported EPS"))
+            estimate = float(row.get("EPS Estimate"))
+        except (AttributeError, TypeError, ValueError):
+            continue
+        if gap > window_days or math.isnan(reported) or math.isnan(estimate):
+            continue
+        if best is None or gap < best[0]:
+            best = (gap, reported, estimate)
+    if best is None or best[2] == 0:
+        return None
+    _, actual, forecast = best
+    return 100.0 * (actual - forecast) / abs(forecast)
+
+
 def next_ex_dividend_date(symbol: str) -> str:
     """Next ex-dividend date as YYYY-MM-DD, 'none', or 'unknown'.
 
