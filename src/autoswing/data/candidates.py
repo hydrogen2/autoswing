@@ -46,6 +46,17 @@ def build_candidate(report: Report, reaction: Reaction | None, floors: dict,
         # the bounce won the bigger-move pick and a sold-off beat rendered
         # as a +7.7% confirmed reaction. Verify report timing via news.
         flags.append("ambiguous_reaction_day")
+    if (
+        reaction is not None
+        and report.market_cap
+        and reaction.adv_dollar_20d > report.market_cap
+    ):
+        # A 20-day average dollar volume above the ENTIRE market cap is not
+        # liquidity, it's a distorted series — a reverse split, ticker
+        # change, or price collapse inside the averaging window. IPST
+        # 2026-09-17: $28.5M "ADV" on a $1.9M microcap would sail past the
+        # $5M liquidity floor that exists to guarantee an exit.
+        flags.append("adv_exceeds_market_cap")
     c = {
         "symbol": report.symbol,
         "company": report.company,

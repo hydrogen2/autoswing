@@ -214,7 +214,8 @@ def next_earnings_date(symbol: str) -> str:
 
 
 def reported_surprise(symbol: str, report_date: date,
-                      window_days: int = 2) -> float | None:
+                      window_days: int = 2,
+                      fallback_estimate: float | None = None) -> float | None:
     """EPS surprise % from yfinance's per-symbol report history — the
     scoring fallback when the Nasdaq day-rows never backfill actuals.
 
@@ -225,6 +226,12 @@ def reported_surprise(symbol: str, report_date: date,
     day around AMC prints; derives the % from reported vs estimate rather
     than trusting a provider's own surprise column. Returns None when no
     complete row lands in the window — never a guess.
+
+    `fallback_estimate` is the consensus the forecast was made against;
+    it stands in ONLY for a missing provider estimate, never a missing
+    reported number. Yahoo often carries the reported EPS but no estimate
+    for single-analyst microcaps (NB 2026-09-11: a real ~-$0.19 print was
+    skipped for its NaN estimate and the leg burned as "unknown").
     """
     import math
 
@@ -241,11 +248,18 @@ def reported_surprise(symbol: str, report_date: date,
         try:
             gap = abs((ts.date() - report_date).days)
             reported = float(row.get("Reported EPS"))
-            estimate = float(row.get("EPS Estimate"))
         except (AttributeError, TypeError, ValueError):
             continue
-        if gap > window_days or math.isnan(reported) or math.isnan(estimate):
+        if gap > window_days or math.isnan(reported):
             continue
+        try:
+            estimate = float(row.get("EPS Estimate"))
+        except (TypeError, ValueError):
+            estimate = float("nan")
+        if math.isnan(estimate):
+            if fallback_estimate is None:
+                continue
+            estimate = float(fallback_estimate)
         if best is None or gap < best[0]:
             best = (gap, reported, estimate)
     if best is None or best[2] == 0:

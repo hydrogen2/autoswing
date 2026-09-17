@@ -283,6 +283,27 @@ class TestCandidateFloors:
         assert c["rejects"] == ["price_data_unavailable"]
 
 
+class TestImplausibleAdv:
+    """IPST/SNYR 2026-09-17: yfinance dollar ADV 8-30x the entire market
+    cap (reverse split / price collapse inside the 20d averaging window)
+    would sail past the $5M liquidity floor. Flagged, never rejected."""
+
+    def test_adv_above_market_cap_flagged(self):
+        c = build_candidate(make_report(market_cap=1_900_000.0),
+                            make_reaction(adv_dollar_20d=28_500_000.0), FLOORS)
+        assert "adv_exceeds_market_cap" in c["quality_flags"]
+        assert not any("illiquid" in r for r in c["rejects"])
+
+    def test_plausible_adv_not_flagged(self):
+        c = build_candidate(make_report(), make_reaction(), FLOORS)
+        assert "adv_exceeds_market_cap" not in c["quality_flags"]
+
+    def test_unknown_market_cap_cannot_flag(self):
+        c = build_candidate(make_report(market_cap=None),
+                            make_reaction(adv_dollar_20d=28_500_000.0), FLOORS)
+        assert "adv_exceeds_market_cap" not in c["quality_flags"]
+
+
 class TestFetchHistoryRetry:
     """A partial batch miss is retried; a wholesale miss is not."""
 

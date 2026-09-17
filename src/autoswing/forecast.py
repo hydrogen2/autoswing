@@ -51,6 +51,12 @@ class Forecast:
     reaction_call: str | None  # up | down | None
     confidence: float         # 0.5..1.0
     reasoning: str = ""
+    # Consensus EPS the call was made against, captured at log time. The
+    # scorer's yfinance fallback needs an estimate basis, and by scoring
+    # time the calendar row this came from may have vanished (NB
+    # 2026-09-11: the Nasdaq row moved on before the ±5d grace ran out).
+    # None on rows logged before 2026-09-17 and when no consensus exists.
+    eps_consensus: float | None = None
 
 
 def validate_forecast(payload: dict) -> list[str]:
@@ -79,6 +85,12 @@ def validate_forecast(payload: dict) -> list[str]:
         errs.append("timing must be bmo|amc|unknown")
     if not payload.get("reasoning", "").strip():
         errs.append("reasoning required — a forecast without a why is a coin flip")
+    ec = payload.get("eps_consensus")
+    if ec is not None:
+        try:
+            float(ec)
+        except (TypeError, ValueError):
+            errs.append("eps_consensus must be a number when given")
     return errs
 
 

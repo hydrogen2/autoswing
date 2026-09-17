@@ -611,6 +611,11 @@ def _scan_upcoming(days: int, journal: Journal):
         if df is not None and len(df) >= 5:
             r["last_close"] = round(float(df["Close"].iloc[-1]), 2)
             r["adv_dollar_20d"] = round(float((df["Close"] * df["Volume"]).mean()), 0)
+            if r["market_cap"] and r["adv_dollar_20d"] > r["market_cap"]:
+                # Same implausibility bound as scan-candidates: dollar ADV
+                # above the whole market cap marks a distorted series
+                # (IPST/SNYR 2026-09-17), not a liquid name.
+                r["quality_flags"] = ["adv_exceeds_market_cap"]
     journal.record("forecast.scan_upcoming", count=len(rows),
                    enriched=[r["symbol"] for r in rows[:30]])
     return {"count": len(rows), "reporters": rows[:60]}
@@ -643,6 +648,21 @@ def _forecast_log(args, journal: Journal):
             f"forecast {fid} already exists — predictions are immutable, "
             "the first call stands"
         )
+    consensus = payload.get("eps_consensus")
+    if consensus is None:
+        # Best-effort capture of the consensus basis while the calendar
+        # row still exists; a lookup failure must never block the log.
+        try:
+            from datetime import date as _date
+
+            from ..data.earnings import fetch_calendar_day
+            sym = payload["symbol"].upper()
+            for r in fetch_calendar_day(_date.fromisoformat(payload["report_date"])):
+                if r.symbol == sym:
+                    consensus = r.eps_forecast
+                    break
+        except Exception:
+            consensus = None
     fc = Forecast(
         id=fid, symbol=payload["symbol"].upper(),
         made_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -651,6 +671,7 @@ def _forecast_log(args, journal: Journal):
         reaction_call=payload.get("reaction_call"),
         confidence=float(payload["confidence"]),
         reasoning=payload["reasoning"],
+        eps_consensus=None if consensus is None else float(consensus),
     )
     from dataclasses import asdict
     append_jsonl(fpath, asdict(fc))
@@ -698,8 +719,14 @@ def _forecast_score(journal: Journal):
             # The day-rows are a pre-print source; actuals may never be
             # backfilled (DSGX/LPTH 2026-09-10 burned as "unknown" on real
             # prints). Ask the per-symbol history before the grace window
-            # can burn the leg.
-            surprise = reported_surprise(f["symbol"], rdate)
+            # can burn the leg. The consensus captured at log time (or the
+            # still-live calendar row) covers Yahoo's missing estimates on
+            # single-analyst names (NB 2026-09-11).
+            basis = f.get("eps_consensus")
+            if basis is None and report is not None:
+                basis = report.eps_forecast
+            surprise = reported_surprise(f["symbol"], rdate,
+                                         fallback_estimate=basis)
 
         df = history.get(f["symbol"])
         reaction = (reaction_metrics(f["symbol"], df, rdate, f["timing"])
