@@ -571,6 +571,12 @@ def _log_skip(args, journal: Journal):
         "category": payload["category"],
         "reason": payload["reason"],
     }
+    if payload.get("entry") is not None:
+        # Validated geometry: persist it, or the stop_geometry replay can
+        # never accrue a "logged"-basis row (it fell back to reconstruction
+        # for every skip before 2026-09-18 because these were dropped here).
+        entry["entry"] = float(payload["entry"])
+        entry["stop"] = float(payload["stop"])
     append_jsonl(PROJECT_ROOT / "state" / "research" / "skips.jsonl", entry)
     journal.record("research.skip_logged", **entry)
     return {"logged": f"{entry['symbol']}-{entry['date']}",
