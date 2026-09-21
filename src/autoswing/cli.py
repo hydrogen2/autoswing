@@ -331,7 +331,22 @@ def _resolve_note(note: str, stdin=None) -> str:
     # this way (recovered only because the brain noticed and re-posted).
     if note == "-":
         stream = sys.stdin if stdin is None else stdin
-        return stream.read().strip()
+        note = stream.read().strip()
+    # A brain slip on 2026-09-21 piped the JSON request body {"note": "..."}
+    # instead of the bare text, so the journal stored the wrapper verbatim.
+    # The wrapper carries no information a reader wants; unwrap the exact
+    # single-key {"note": <str>} shape (repeatedly, in case of double-wrap)
+    # and store anything else as-is.
+    while True:
+        try:
+            parsed = json.loads(note)
+        except ValueError:
+            break
+        if (isinstance(parsed, dict) and set(parsed) == {"note"}
+                and isinstance(parsed["note"], str)):
+            note = parsed["note"].strip()
+        else:
+            break
     return note
 
 

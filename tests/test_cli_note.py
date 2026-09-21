@@ -29,3 +29,38 @@ class TestResolveNote:
     def test_plain_note_ignores_stdin(self):
         note = _resolve_note("literal note", stdin=io.StringIO("should be ignored"))
         assert note == "literal note"
+
+
+class TestJsonWrapperUnwrap:
+    """Regression: on 2026-09-21 the brain piped the JSON request body
+    {"note": "..."} instead of bare text and the journal stored the wrapper
+    verbatim. The exact single-key {"note": <str>} shape is unwrapped; any
+    other JSON-looking note is stored as-is."""
+
+    def test_unwraps_json_note_wrapper(self):
+        assert _resolve_note('{"note": "ENTRY WINDOW digest"}') == (
+            "ENTRY WINDOW digest"
+        )
+
+    def test_unwraps_wrapper_from_stdin(self):
+        note = _resolve_note("-", stdin=io.StringIO('{"note": "piped digest"}\n'))
+        assert note == "piped digest"
+
+    def test_unwraps_double_wrap(self):
+        double = '{"note": "{\\"note\\": \\"inner digest\\"}"}'
+        assert _resolve_note(double) == "inner digest"
+
+    def test_other_json_object_kept_verbatim(self):
+        raw = '{"note": "x", "extra": 1}'
+        assert _resolve_note(raw) == raw
+
+    def test_non_string_note_value_kept_verbatim(self):
+        raw = '{"note": 42}'
+        assert _resolve_note(raw) == raw
+
+    def test_json_array_kept_verbatim(self):
+        assert _resolve_note('["a", "b"]') == '["a", "b"]'
+
+    def test_plain_text_with_braces_kept(self):
+        raw = "digest mentions {\"note\": style} informally"
+        assert _resolve_note(raw) == raw
