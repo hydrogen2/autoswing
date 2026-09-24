@@ -417,3 +417,76 @@ def append_jsonl(path: Path, entry: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "a") as f:
         f.write(json.dumps(entry, default=str) + "\n")
+
+
+# --- expiry sweep -------------------------------------------------------------
+
+def resolve_expiry(cycle: dict, close_on_expiry: float) -> tuple[str, str]:
+    """What a live contract becomes at expiry, from the expiry-day CLOSE.
+
+    Deterministic on purpose. Leaving expiry to a prompt instruction is how a
+    book quietly accrues open cycles and reports n_closed=0 for a month --
+    a zero denominator held for weeks IS the failure signature, and this
+    repo has already paid for that once (instrument #16).
+
+    Convention: a short option is exercised only when it finishes strictly
+    in the money. Exactly at the strike, it lapses.
+    """
+    st = cycle["status"]
+    if st == "csp_open":
+        return ("assign" if close_on_expiry < cycle["strike"]
+                else "expire_worthless"), "put"
+    if st == "cc_open":
+        return ("call_away" if close_on_expiry > cycle["call_strike"]
+                else "expire_worthless"), "call"
+    raise ValueError(f"cycle {cycle['id']} has no live option leg (status {st})")
+
+
+def due_for_expiry(cycles: list[dict], today: date) -> list[dict]:
+    """Cycles whose live contract has already expired. An expiry is resolved
+    on a LATER run using that day's settled close, never guessed intraday."""
+    out = []
+    for c in cycles:
+        if c["status"] == "csp_open":
+            exp = c.get("expiry")
+        elif c["status"] == "cc_open":
+            exp = c.get("call_expiry")
+        else:
+            continue
+        try:
+            if exp and date.fromisoformat(exp) < today:
+                out.append(c)
+        except ValueError:
+            continue
+    return out
+
+
+def net_basis(cycle: dict) -> float:
+    """Per-share cost of the shares actually held: the strike paid, less every
+    premium taken in across the cycle."""
+    return round(cycle["strike"] - cycle.get("premium_received", 0.0), 4)
+
+
+def select_call_strike(rows: list[dict], floor: float) -> dict | None:
+    """Lowest liquid call strike at or above `floor`.
+
+    The floor is the net cost basis, and never selling below it is the whole
+    discipline of the second half of the wheel. A call struck under your basis
+    converts a paper loss into a realised one in exchange for a small premium
+    -- which is precisely how "wait for it to bounce back" turns into selling
+    the bounce away. Returns None when no strike qualifies, and None means
+    hold the shares uncovered, not lower the bar.
+    """
+    ok = []
+    for r in rows:
+        mid = (r["bid"] + r["ask"]) / 2
+        if r["bid"] <= 0 or mid <= 0:
+            continue
+        if r["strike"] < floor:
+            continue
+        if r.get("open_interest", 0) < MIN_OPEN_INTEREST:
+            continue
+        if (r["ask"] - r["bid"]) / mid > MAX_SPREAD_PCT:
+            continue
+        ok.append(r)
+    return min(ok, key=lambda r: r["strike"]) if ok else None

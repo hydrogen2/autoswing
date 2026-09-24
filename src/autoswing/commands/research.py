@@ -118,6 +118,10 @@ def _dispatch_data(config, journal: Journal, args):
         return _wheel_log(args, journal)
     if args.command == "wheel-advance":
         return _wheel_advance(args, journal)
+    if args.command == "wheel-expire":
+        return _wheel_expire(journal)
+    if args.command == "wheel-cover":
+        return _wheel_cover(journal)
     if args.command == "wheel-score":
         return _wheel_score(journal)
     if args.command == "signal-ingest":
@@ -222,7 +226,8 @@ def _trim_compare(journal: Journal, args):
     from ..data.prices import fetch_history
     from ..trim import RULES, simulate
 
-    syms = [s.strip().upper() for s in args.symbols.split(",") if s.strip()]
+    syms = ([s.strip().upper() for s in args.symbols.split(",") if s.strip()]
+            if args.symbols else _wheel_universe())
     period = "5y" if args.days > 730 else "2y"
     hist = fetch_history(syms, period=period)
     cutoff_days = args.days
@@ -828,6 +833,116 @@ def _wheel_paths():
     return d / "cycles.jsonl", d / "screens.jsonl"
 
 
+def _wheel_universe():
+    """The standing candidate list. Kept in config/ and owner-editable so the
+    universe is STABLE: re-picking names every week would let the screen drift
+    toward whatever happens to look good that week, which is selection bias
+    wearing a screen's clothes."""
+    from ..config import PROJECT_ROOT
+
+    path = PROJECT_ROOT / "config" / "wheel-universe.txt"
+    if not path.exists():
+        raise ValueError(f"no universe file at {path}; pass symbols explicitly")
+    syms = []
+    for line in path.read_text().splitlines():
+        line = line.split("#")[0].strip().upper()
+        if line:
+            syms.append(line)
+    if not syms:
+        raise ValueError(f"{path} lists no symbols")
+    return syms
+
+
+def _wheel_expire(journal: Journal):
+    """Resolve expired contracts from the settled close of the expiry day."""
+    import datetime as dt
+
+    from ..data.prices import fetch_history
+    from ..wheel import advance, due_for_expiry, load_jsonl, resolve_expiry, write_jsonl
+
+    cpath, _ = _wheel_paths()
+    cycles = load_jsonl(cpath)
+    today = dt.date.today()
+    due = due_for_expiry(cycles, today)
+    if not due:
+        return {"resolved": 0, "cycles": len(cycles)}
+
+    hist = fetch_history(sorted({c["symbol"] for c in due}), period="3mo")
+    resolved, unresolved = [], []
+    for c in due:
+        exp = c["expiry"] if c["status"] == "csp_open" else c["call_expiry"]
+        df = hist.get(c["symbol"])
+        close = None
+        if df is not None and len(df):
+            rows = [(ts.date(), float(v)) for ts, v in zip(df.index, df["Close"])
+                    if ts.date() <= dt.date.fromisoformat(exp)]
+            if rows and rows[-1][0] == dt.date.fromisoformat(exp):
+                close = round(rows[-1][1], 4)
+        if close is None:
+            # No settled close is "we do not know yet", never "it lapsed".
+            unresolved.append({"id": c["id"], "expiry": exp,
+                               "why": "no settled close for expiry date"})
+            continue
+        event, leg = resolve_expiry(c, close)
+        idx = next(i for i, x in enumerate(cycles) if x["id"] == c["id"])
+        cycles[idx] = advance(cycles[idx], event, exp, price=close)
+        resolved.append({"id": c["id"], "leg": leg, "event": event,
+                         "close": close, "status": cycles[idx]["status"]})
+
+    if resolved:
+        write_jsonl(cpath, cycles)
+    journal.record("wheel.expired", resolved=len(resolved),
+                   unresolved=len(unresolved), detail=resolved)
+    return {"resolved": len(resolved), "detail": resolved,
+            "unresolved": unresolved, "cycles": len(cycles)}
+
+
+def _wheel_cover(journal: Journal):
+    """Write a call against each assigned cycle. Deterministic: an assigned
+    cycle left uncovered stalls the book exactly as an unresolved expiry
+    does, and neither should depend on anyone remembering."""
+    import datetime as dt
+
+    from ..data.options import call_rows
+    from ..wheel import (
+        advance, load_jsonl, net_basis, select_call_strike, write_jsonl,
+    )
+
+    cpath, _ = _wheel_paths()
+    cycles = load_jsonl(cpath)
+    today = dt.date.today()
+    covered, skipped = [], []
+
+    for i, c in enumerate(cycles):
+        if c["status"] != "assigned":
+            continue
+        floor = net_basis(c)
+        expiry, rows = call_rows(c["symbol"], today)
+        if not rows:
+            skipped.append({"id": c["id"], "why": "no call chain in window"})
+            continue
+        pick = select_call_strike(rows, floor)
+        if pick is None:
+            # Holding uncovered is the correct outcome, not a failure: the
+            # stock is far enough below basis that every liquid call would
+            # lock in the loss.
+            skipped.append({"id": c["id"], "why": "no liquid strike at or "
+                            f"above net basis {floor}", "net_basis": floor})
+            continue
+        cycles[i] = advance(c, "sell_call", today.isoformat(),
+                            premium=pick["bid"], strike=pick["strike"],
+                            expiry=expiry)
+        covered.append({"id": c["id"], "call_strike": pick["strike"],
+                        "expiry": expiry, "premium": pick["bid"],
+                        "net_basis": floor})
+
+    if covered:
+        write_jsonl(cpath, cycles)
+    journal.record("wheel.covered", covered=len(covered),
+                   skipped=len(skipped), detail=covered)
+    return {"covered": len(covered), "detail": covered, "uncovered": skipped}
+
+
 def _wheel_screen(args, journal: Journal):
     """Screen cash-secured puts and persist the snapshot.
 
@@ -840,7 +955,8 @@ def _wheel_screen(args, journal: Journal):
     from ..data.options import fetch_put_quotes
     from ..wheel import append_jsonl, screen
 
-    syms = [s.strip().upper() for s in args.symbols.split(",") if s.strip()]
+    syms = ([s.strip().upper() for s in args.symbols.split(",") if s.strip()]
+            if args.symbols else _wheel_universe())
     quotes, skipped = fetch_put_quotes(
         syms, args.collateral_cap, dte_min=args.dte_min, dte_max=args.dte_max)
     result = screen(quotes, args.collateral_cap)
@@ -877,8 +993,21 @@ def _wheel_log(args, journal: Journal):
     symbol = payload["symbol"].strip().upper()
     cid = cycle_id(symbol, payload["opened"], float(payload["strike"]))
     cpath, _ = _wheel_paths()
-    if any(c["id"] == cid for c in load_jsonl(cpath)):
+    existing = load_jsonl(cpath)
+    if any(c["id"] == cid for c in existing):
         raise ValueError(f"cycle {cid} already open")
+    # One live cycle per symbol. A weekly screen will keep surfacing the same
+    # name while its vol stays rich, and stacking cycles in one symbol would
+    # inflate the sample without adding information -- forty cycles that are
+    # really four names is not n=40, and the verdict threshold assumes it is.
+    from ..wheel import TERMINAL
+
+    live = next((c for c in existing
+                 if c["symbol"] == symbol and c["status"] not in TERMINAL), None)
+    if live:
+        raise ValueError(
+            f"{symbol} already has a live cycle ({live['id']}, {live['status']}); "
+            "one live cycle per symbol keeps the sample independent")
 
     contracts = int(payload.get("contracts", 1))
     entry = {

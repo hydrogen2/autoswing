@@ -24,6 +24,7 @@ DATA_COMMANDS = (
     "signal-log", "signal-score", "signal-stats", "signal-ingest",
     "tone-log", "tone-outcomes",
     "wheel-screen", "wheel-log", "wheel-advance", "wheel-score",
+    "wheel-expire", "wheel-cover",
 )
 
 
@@ -272,7 +273,8 @@ def _build_parser() -> argparse.ArgumentParser:
         "variance premium, earnings inside the contract, and unexplained "
         "front-month richness. Measurement only.",
     )
-    ws.add_argument("symbols", help="comma-separated tickers")
+    ws.add_argument("symbols", nargs="?", default=None,
+                    help="comma-separated tickers; default: config/wheel-universe.txt")
     ws.add_argument("--collateral-cap", type=float, default=4900.0,
                     help="max strike*100 per contract (default: 10%% position cap)")
     ws.add_argument("--dte-min", type=int, default=20)
@@ -303,6 +305,20 @@ def _build_parser() -> argparse.ArgumentParser:
                     help="per-share premium (sell_call)")
     wa.add_argument("--strike", type=float, default=None)
     wa.add_argument("--expiry", default=None)
+
+    sub.add_parser(
+        "wheel-expire",
+        help="wheel book: resolve every cycle whose contract has expired, "
+        "from that day's settled close. Deterministic — no judgement, and "
+        "no cycle can sit open because nobody remembered it.",
+    )
+
+    sub.add_parser(
+        "wheel-cover",
+        help="wheel book: sell a covered call against every assigned cycle, "
+        "at the lowest liquid strike AT OR ABOVE net cost basis. Never "
+        "below — that sells the bounce away for a small premium.",
+    )
 
     sub.add_parser(
         "wheel-score",
@@ -369,8 +385,15 @@ def _arm_watchdog(journal: Journal, command: str) -> None:
     import signal
 
     # backtest legitimately runs long on a cold cache (~1 calendar request
-    # per trading day + price cohorts); everything else keeps the tight wall.
-    default = "3600" if command == "backtest" else "180"
+    # per trading day + price cohorts); wheel-screen makes ~5 network calls
+    # per symbol across a ~35-name universe. Everything else keeps the tight
+    # wall, and neither exception touches the broker.
+    if command == "backtest":
+        default = "3600"
+    elif command in ("wheel-screen", "wheel-cover", "wheel-score"):
+        default = "900"
+    else:
+        default = "180"
     limit = int(os.environ.get("AUTOSWING_CMD_TIMEOUT", default))
 
     def _die(signum, frame):

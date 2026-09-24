@@ -342,3 +342,118 @@ def test_score_book_routes_option_marks_by_cycle_id():
     prem = {r["id"]: r["premium_usd"] for r in out["rows"]}
     assert prem["a"] == pytest.approx(50.0)
     assert prem["b"] == pytest.approx(90.0)
+
+
+# --- expiry sweep -------------------------------------------------------------
+
+from datetime import date as _date
+
+from autoswing.wheel import due_for_expiry, resolve_expiry
+
+
+def test_put_below_strike_at_expiry_is_assigned():
+    assert resolve_expiry(base_cycle(), 44.99)[0] == "assign"
+
+
+def test_put_above_strike_at_expiry_lapses():
+    assert resolve_expiry(base_cycle(), 45.01)[0] == "expire_worthless"
+
+
+def test_exactly_at_the_strike_lapses():
+    """Convention, written down so it is not re-litigated: a short option is
+    exercised only when it finishes strictly in the money."""
+    assert resolve_expiry(base_cycle(), 45.0)[0] == "expire_worthless"
+
+
+def test_call_above_strike_is_called_away():
+    c = advance(base_cycle(), "assign", "2026-10-16")
+    c = advance(c, "sell_call", "2026-10-19", premium=0.8, strike=46.0,
+                expiry="2026-11-20")
+    assert resolve_expiry(c, 46.5)[0] == "call_away"
+    assert resolve_expiry(c, 45.0)[0] == "expire_worthless"
+    assert resolve_expiry(c, 46.0)[0] == "expire_worthless"
+
+
+def test_resolve_expiry_refuses_a_cycle_with_no_live_leg():
+    c = advance(base_cycle(), "assign", "2026-10-16")
+    with pytest.raises(ValueError):
+        resolve_expiry(c, 40.0)
+
+
+def test_due_for_expiry_ignores_live_and_terminal_cycles():
+    live = base_cycle(id="live", expiry="2026-11-20")
+    past = base_cycle(id="past", expiry="2026-10-16")
+    done = advance(base_cycle(id="done"), "expire_worthless", "2026-10-16",
+                   price=47.0)
+    due = due_for_expiry([live, past, done], _date(2026, 10, 19))
+    assert [c["id"] for c in due] == ["past"]
+
+
+def test_expiry_day_itself_is_not_yet_due():
+    """Resolution reads the SETTLED close, so it happens on a later run."""
+    c = base_cycle(expiry="2026-10-16")
+    assert due_for_expiry([c], _date(2026, 10, 16)) == []
+    assert len(due_for_expiry([c], _date(2026, 10, 17))) == 1
+
+
+def test_due_for_expiry_uses_the_call_expiry_once_a_call_is_open():
+    c = advance(base_cycle(), "assign", "2026-10-16")
+    c = advance(c, "sell_call", "2026-10-19", premium=0.8, strike=46.0,
+                expiry="2026-11-20")
+    assert due_for_expiry([c], _date(2026, 10, 20)) == []
+    assert len(due_for_expiry([c], _date(2026, 11, 23))) == 1
+
+
+# --- covered-call selection ---------------------------------------------------
+
+from autoswing.wheel import net_basis, select_call_strike
+
+
+def _c(strike, bid, ask, oi=2000):
+    return {"strike": strike, "bid": bid, "ask": ask, "open_interest": oi}
+
+
+def test_net_basis_subtracts_every_premium_taken_in():
+    c = advance(base_cycle(), "assign", "2026-10-16")
+    assert net_basis(c) == pytest.approx(44.0)     # 45 strike - 1.00 premium
+    c = advance(c, "sell_call", "2026-10-19", premium=0.5, strike=46.0,
+                expiry="2026-11-20")
+    assert net_basis(c) == pytest.approx(43.5)
+
+
+def test_picks_lowest_strike_at_or_above_basis():
+    rows = [_c(42, 2.0, 2.1), _c(44, 1.0, 1.1), _c(46, 0.5, 0.55)]
+    assert select_call_strike(rows, 44.0)["strike"] == 44.0
+
+
+def test_never_sells_a_call_below_cost_basis():
+    """The discipline of the second half: a call under basis converts a paper
+    loss into a realised one for a small premium."""
+    rows = [_c(40, 3.0, 3.1), _c(42, 2.0, 2.1)]
+    assert select_call_strike(rows, 44.0) is None
+
+
+def test_uncovered_is_the_answer_when_nothing_qualifies():
+    rows = [_c(46, 0.5, 0.55, oi=10), _c(48, 0.4, 0.9)]
+    assert select_call_strike(rows, 44.0) is None
+
+
+def test_illiquid_or_wide_strikes_are_skipped_not_chosen():
+    rows = [_c(44, 1.0, 1.1, oi=5), _c(45, 0.9, 2.0), _c(46, 0.5, 0.55)]
+    assert select_call_strike(rows, 44.0)["strike"] == 46.0
+
+
+def test_zero_bid_strike_is_not_worth_writing():
+    rows = [_c(44, 0.0, 0.05), _c(45, 0.6, 0.65)]
+    assert select_call_strike(rows, 44.0)["strike"] == 45.0
+
+
+def test_verdict_threshold_assumes_independent_cycles():
+    """Documents why wheel-log refuses a second live cycle per symbol: the
+    n>=40 threshold is meaningless if the cycles are really four names."""
+    closed = [advance(base_cycle(id=f"c{i}"), "expire_worthless",
+                      "2026-10-16", price=47.0) for i in range(MIN_N_FOR_VERDICT)]
+    out = score_book(closed)
+    assert out["n_closed"] == MIN_N_FOR_VERDICT
+    assert "too few cycles" not in out["verdict"]
+    assert "vs buy-and-hold" in out["verdict"]

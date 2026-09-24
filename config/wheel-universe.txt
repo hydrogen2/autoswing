@@ -1,0 +1,61 @@
+# Wheel book candidate universe. Owner-editable.
+#
+# Membership rule, and the only one that matters: a name belongs here if you
+# would be content to OWN it at a strike ~8% below spot. The screen decides
+# whether the premium is worth taking; this file decides whether assignment
+# is acceptable. Never add a name because its premium looks fat -- the first
+# screen (2026-09-24) found the most frightened names paid the WORST.
+#
+# Practical constraint: collateral is strike x 100 against a ~$4,900 position
+# cap, so only strikes <= $49 are reachable. Names much above ~$52 will never
+# produce a candidate.
+#
+# Deliberately excluded: distressed balance sheets (WOLF), unresolved legal
+# overhangs (CC/PFAS), and structurally declining retail -- in each case the
+# high implied vol is a correct forecast, not a mispricing.
+
+# consumer / travel
+MGM
+ALK
+LUV
+CCL
+PENN
+LEVI
+CRI
+
+# financials
+KEY
+HBAN
+RF
+VLY
+NU
+SOFI
+
+# industrials / materials / energy
+DOW
+MOS
+AA
+OLN
+F
+CLF
+VALE
+
+# staples
+CAG
+CPB
+HRL
+TSN
+
+# tech / communications
+SIRI
+PINS
+CPNG
+LYFT
+ALGM
+JD
+ZTO
+
+# precious metals
+KGC
+AGI
+PAAS

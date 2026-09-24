@@ -36,24 +36,24 @@ def front_slope(ticker, spot: float, today: dt.date) -> float | None:
     specific near-term event we have not identified — and selling a put into
     an event you cannot name is the failure mode this screen exists to avoid.
     """
-    front = back = None
-    for e in (ticker.options or [])[:10]:
+    # Choose the two expiry DATES first, then fetch exactly two chains.
+    # Walking every expiry and fetching as it went cost ~10 network calls per
+    # symbol and blew the CLI watchdog on a full universe.
+    dated = []
+    for e in (ticker.options or []):
         try:
-            d = (dt.date.fromisoformat(e) - today).days
+            dated.append(((dt.date.fromisoformat(e) - today).days, e))
         except ValueError:
             continue
-        if not (5 <= d <= 200):
-            continue
-        try:
-            iv = _atm_iv(ticker.option_chain(e).puts, spot)
-        except Exception:
-            continue
-        if iv is None:
-            continue
-        if 15 <= d <= 35 and front is None:
-            front = iv
-        if d >= 70 and back is None:
-            back = iv
+    near = next((e for d, e in sorted(dated) if 15 <= d <= 35), None)
+    far = next((e for d, e in sorted(dated) if d >= 70), None)
+    if near is None or far is None:
+        return None
+    try:
+        front = _atm_iv(ticker.option_chain(near).puts, spot)
+        back = _atm_iv(ticker.option_chain(far).puts, spot)
+    except Exception:
+        return None
     if front is None or back is None:
         return None
     return round(front - back, 4)
@@ -169,3 +169,31 @@ def option_mark(symbol: str, expiry: str, strike: float,
         return round(bid, 4) if bid > 0 else None
     except Exception:
         return None
+
+
+def call_rows(symbol: str, today: dt.date, dte_min: int = 21,
+              dte_max: int = 60) -> tuple[str | None, list[dict]]:
+    """Call chain for the first expiry in the window, as plain dicts so the
+    strike choice stays a pure, testable decision."""
+    import yfinance as yf
+
+    try:
+        tk = yf.Ticker(symbol)
+        cands = []
+        for e in (tk.options or []):
+            try:
+                d = (dt.date.fromisoformat(e) - today).days
+            except ValueError:
+                continue
+            if dte_min <= d <= dte_max:
+                cands.append((d, e))
+        if not cands:
+            return None, []
+        _, expiry = sorted(cands)[0]
+        df = tk.option_chain(expiry).calls
+        rows = [{"strike": float(r.strike), "bid": float(r.bid),
+                 "ask": float(r.ask), "open_interest": int(r.openInterest or 0)}
+                for r in df.itertuples()]
+        return expiry, rows
+    except Exception:
+        return None, []

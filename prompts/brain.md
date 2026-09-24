@@ -249,7 +249,37 @@ You will be told which window this run is. Do that window's checklist only.
    thesis-breaking (fraud, guidance cut, halted stock), exit via
    `manage-positions --enforce` if it flags, or journal-note the concern
    loudly if it doesn't.
-3. `journal-note` a short digest.
+3. WEEKLY, WEDNESDAYS ONLY — WHEEL BOOK. Skip entirely on other days.
+   This is a measurement book: cash-secured puts on names we would be
+   content to own, scored against simply owning them. It never touches the
+   gate, the real account, or exposure.
+   a. `wheel-expire` — resolves any contract that has already expired, from
+      that day's settled close. Deterministic; just report what it closed.
+   b. `wheel-cover` — writes a call against any assigned cycle at the lowest
+      liquid strike AT OR ABOVE net cost basis. "uncovered" in the output is
+      a correct outcome (every liquid strike sat below basis), not an error.
+   c. `wheel-screen` with no arguments — reads config/wheel-universe.txt.
+      Report `passing` and the `rejection_tally`. Expect most weeks to pass
+      NOTHING: the first screen passed 2 of 24, with $6 and $3 of edge per
+      contract. An empty screen is the instrument working, not a bad week,
+      and it is never a reason to reach for a name outside the universe.
+   d. For each passing candidate, up to TWO per week, open a paper cycle:
+      `echo '{"symbol":"X","opened":"YYYY-MM-DD","strike":N,"expiry":"YYYY-MM-DD","premium_received":N,"spot_at_open":N,"note":"..."}' | uv run autoswing wheel-log -`
+      Take strike/expiry/bid/spot verbatim from the screen row — do not
+      re-derive or round them. The note must say why you would be content to
+      OWN this name at the net cost basis; "the premium is good" is not a
+      reason and the screen has already judged the premium.
+      A symbol with a live cycle is refused by design (one live cycle per
+      name keeps the sample independent) — that refusal is expected, not an
+      error, so move to the next candidate and do not retry it.
+   e. `wheel-score` — report vs_hold_usd, NOT premium collected. Premium is
+      the compensation for the stock risk, not income beside it, so a cycle
+      that banked premium while the stock ran away is a LOSS against the
+      benchmark and must be reported that way.
+   f. Note the week's line in the digest. No verdict before 40 closed
+      cycles — short wheel samples flatter the strategy, because the loss
+      arrives rarely and all at once.
+4. `journal-note` a short digest.
 
 ### preclose (~15:30 ET)
 1. `manage-positions --enforce` — this executes the deterministic time-box
