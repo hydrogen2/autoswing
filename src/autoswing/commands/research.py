@@ -826,6 +826,31 @@ def _forecast_score(journal: Journal):
 
 # -- wheel book ----------------------------------------------------------------
 
+def _wheel_wednesday_guard(command: str, now_et=None):
+    """The wheel book is a WEEKLY Wednesday task; the cadence and the
+    two-cycles-per-week cap both assume exactly one run per week. On
+    2026-09-24 (a Thursday) the brain misread the weekday and ran the full
+    book a day late, doubling that week's openings. The prompt alone cannot
+    hold the line when the brain's own weekday arithmetic is the thing that
+    failed, so mutating wheel commands self-enforce here (same pattern as
+    benchmark-mark's preclose-only refusal). Unset AUTOSWING_WINDOW
+    (manual/owner invocation) is allowed on any day."""
+    import datetime as dt
+    import os
+    from zoneinfo import ZoneInfo
+
+    window = os.environ.get("AUTOSWING_WINDOW", "")
+    if not window:
+        return
+    if now_et is None:
+        now_et = dt.datetime.now(ZoneInfo("America/New_York"))
+    if now_et.weekday() != 2:  # Monday=0 .. Wednesday=2
+        raise ValueError(
+            f"{command} runs Wednesdays only (weekly wheel book); today is "
+            f"{now_et.strftime('%A')} ET — skip the wheel book entirely today"
+        )
+
+
 def _wheel_paths():
     from ..config import PROJECT_ROOT
 
@@ -855,6 +880,7 @@ def _wheel_universe():
 
 def _wheel_expire(journal: Journal):
     """Resolve expired contracts from the settled close of the expiry day."""
+    _wheel_wednesday_guard("wheel-expire")
     import datetime as dt
 
     from ..data.prices import fetch_history
@@ -901,6 +927,7 @@ def _wheel_cover(journal: Journal):
     """Write a call against each assigned cycle. Deterministic: an assigned
     cycle left uncovered stalls the book exactly as an unresolved expiry
     does, and neither should depend on anyone remembering."""
+    _wheel_wednesday_guard("wheel-cover")
     import datetime as dt
 
     from ..data.options import call_rows
@@ -978,6 +1005,7 @@ def _wheel_screen(args, journal: Journal):
 
 
 def _wheel_log(args, journal: Journal):
+    _wheel_wednesday_guard("wheel-log")
     from datetime import datetime, timezone
 
     from ..wheel import (
@@ -1033,6 +1061,7 @@ def _wheel_log(args, journal: Journal):
 
 
 def _wheel_advance(args, journal: Journal):
+    _wheel_wednesday_guard("wheel-advance")
     from ..wheel import advance, load_jsonl, write_jsonl
 
     cpath, _ = _wheel_paths()

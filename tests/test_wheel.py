@@ -457,3 +457,36 @@ def test_verdict_threshold_assumes_independent_cycles():
     assert out["n_closed"] == MIN_N_FOR_VERDICT
     assert "too few cycles" not in out["verdict"]
     assert "vs buy-and-hold" in out["verdict"]
+
+
+# -- Wednesday-only guard ------------------------------------------------------
+# Regression for 2026-09-24 (a Thursday): the brain misread the weekday as
+# Wednesday and ran the full wheel book a day off-cadence, opening a second
+# pair of cycles in the same week. The weekly cadence and the two-per-week cap
+# are enforced in code because the prompt's "WEDNESDAYS ONLY" cannot survive
+# the brain getting the weekday itself wrong.
+
+from datetime import datetime as _datetime
+
+from autoswing.commands.research import _wheel_wednesday_guard
+
+
+def test_guard_refuses_declared_window_on_non_wednesday(monkeypatch):
+    monkeypatch.setenv("AUTOSWING_WINDOW", "midday")
+    thursday = _datetime(2026, 9, 24, 12, 30)  # the incident day
+    with pytest.raises(ValueError, match="Wednesdays only"):
+        _wheel_wednesday_guard("wheel-log", now_et=thursday)
+
+
+def test_guard_allows_wednesday_in_declared_window(monkeypatch):
+    monkeypatch.setenv("AUTOSWING_WINDOW", "midday")
+    wednesday = _datetime(2026, 9, 23, 12, 30)
+    _wheel_wednesday_guard("wheel-log", now_et=wednesday)  # no raise
+
+
+def test_guard_allows_manual_invocation_any_day(monkeypatch):
+    # Unset AUTOSWING_WINDOW = owner at a shell (the 09-24 ship-time seed
+    # cycles were opened this way, legitimately) -- never refused.
+    monkeypatch.delenv("AUTOSWING_WINDOW", raising=False)
+    thursday = _datetime(2026, 9, 24, 12, 30)
+    _wheel_wednesday_guard("wheel-log", now_et=thursday)  # no raise
