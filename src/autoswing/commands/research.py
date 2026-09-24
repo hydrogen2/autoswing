@@ -88,6 +88,24 @@ def _dispatch_data(config, journal: Journal, args):
             for k in ("entries", "stops", "targets", "market_exits")
         } | {"unmatched": result["unmatched"]})
         return result
+    if args.command == "tone-log":
+        return _tone_log(args, journal)
+    if args.command == "tone-outcomes":
+        from ..config import PROJECT_ROOT
+        from ..data.prices import fetch_history
+        from ..forecast import load_jsonl
+        from ..research import score_tone
+
+        rows = load_jsonl(PROJECT_ROOT / "state" / "research" / "tone.jsonl")
+        if not rows:
+            return {"scored": 0, "pending": 0, "by_field": {},
+                    "note": "no tone rows logged yet"}
+        hist = fetch_history(sorted({r["symbol"] for r in rows}), period="6mo")
+        result = score_tone(rows, hist)
+        journal.record("research.tone_outcomes", scored=result["scored"],
+                       pending=result["pending"],
+                       verdict_ready=result["verdict_ready"])
+        return result
     if args.command == "log-skip":
         return _log_skip(args, journal)
     if args.command == "backtest":
@@ -551,6 +569,45 @@ def _lesson_log(config, args, journal: Journal):
     append_jsonl(_lessons_path(), entry)
     journal.record("lessons.logged", **entry)
     return {"logged": t.id, "thesis_held": entry["thesis_held"]}
+
+
+def _tone_log(args, journal: Journal):
+    """Structured earnings-tone fields for one candidate, entered or skipped.
+
+    Immutable per symbol+date: the whole point is the reading made BEFORE the
+    outcome was known, so a revision after the fact would poison the sample."""
+    from datetime import date
+
+    from ..config import PROJECT_ROOT
+    from ..forecast import append_jsonl, load_jsonl
+    from ..research import validate_tone
+
+    raw = sys.stdin.read() if args.tone == "-" else open(args.tone).read()
+    payload = json.loads(raw)
+    errs = validate_tone(payload)
+    if errs:
+        raise ValueError("invalid tone record: " + "; ".join(errs))
+
+    path = PROJECT_ROOT / "state" / "research" / "tone.jsonl"
+    entry = {
+        "symbol": payload["symbol"].upper(),
+        "date": payload.get("date", date.today().isoformat()),
+        "outcome": payload["outcome"],
+        "guidance_direction": payload["guidance_direction"],
+        "one_time_items": payload["one_time_items"],
+        "backlog_rewrite": payload["backlog_rewrite"],
+        "evidence": payload["evidence"].strip(),
+    }
+    key = (entry["symbol"], entry["date"])
+    if any((r["symbol"], r["date"]) == key for r in load_jsonl(path)):
+        raise ValueError(
+            f"tone already logged for {entry['symbol']} on {entry['date']} — "
+            "records are immutable; the reading made before the outcome was "
+            "known is the measurement")
+    append_jsonl(path, entry)
+    journal.record("research.tone_logged", **entry)
+    return {"logged": f"{entry['symbol']}-{entry['date']}",
+            "outcome": entry["outcome"]}
 
 
 def _log_skip(args, journal: Journal):

@@ -201,6 +201,30 @@ You will be told which window this run is. Do that window's checklist only.
    VIRTUAL position only — shadow never places real orders. One-line
    thesis per shadow entry in the digest; also note quality names you
    passed on and why.
+6b. EARNINGS-TONE LEDGER (measurement only — these fields must NEVER
+   change what you decide today). For EVERY candidate you seriously
+   evaluated — the ones you entered AND the ones you skipped — log your
+   reading of the print:
+   `echo '{"symbol":"X","guidance_direction":"raised|reaffirmed|cut|none|unclear","one_time_items":"clean|minor|material|unclear","backlog_rewrite":"yes|no|unclear","outcome":"entered|skipped","evidence":"..."}' | uv run autoswing tone-log -`
+   - guidance_direction: what management did to FORWARD guidance, not what
+     the quarter printed.
+   - one_time_items: "material" when a gain or charge meaningfully distorts
+     headline EPS (the DUOT asset-sale shape); "clean" when the beat is
+     operating.
+   - backlog_rewrite: did backlog/bookings/orders change the forward story?
+   - evidence: the specific line from the filing or call. "unclear" is a
+     legitimate answer and beats a guess — a confidently wrong reading is
+     worse than an honest blank.
+   Log entries AND skips: logging only what you entered would measure your
+   taste rather than the fields. Records are IMMUTABLE per symbol+date —
+   the reading made BEFORE the outcome is known is the measurement.
+   WHY: exits are settled best-of-five and all 114 scored skips are
+   negative at 15d, so entry SELECTION is the only unexplained place left,
+   and today it exists only as free-text rationale nothing can regress.
+   PRE-REGISTERED: no field influences a live decision until n>=100
+   candidates, and then only if its drift separation survives dropping the
+   single best trade.
+
 7. SKIP LEDGER: for every candidate you seriously considered and rejected
    (max ~6/day), log it structurally:
    `echo '{"symbol":"X","category":"low_quality_beat","reason":"..."}' | uv run autoswing log-skip -`

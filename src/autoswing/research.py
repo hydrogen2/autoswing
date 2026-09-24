@@ -33,6 +33,110 @@ SKIP_CATEGORIES = (
 )
 
 
+# -- earnings-tone ledger -------------------------------------------------------
+#
+# Proposed 2026-09-18, green-lit 09-24. Every other instrument has now
+# finished its job and pointed the same way: exits are best-of-five and
+# settled, all 114 scored skips are negative at 15d (the judgment layer
+# rejects genuine losers), and the 2023-25 backtest said the mechanical
+# skeleton is ~breakeven so the judgment layer must earn the whole edge.
+# That leaves ENTRY SELECTION as the only unexplained place — and it is
+# currently recorded as free-text rationale that cannot be regressed.
+#
+# These three fields turn the distinction into data. The motivating pair:
+# FPS (a genuine backlog/guidance rewrite) paid 2.9R while TCOM (an
+# adjusted-only beat masking a GAAP loss) was rightly skipped — same "beat"
+# label, opposite quality, and nothing in the system could tell them apart
+# numerically.
+#
+# PRE-REGISTERED (set before any data exists, per the drift-exhaustion
+# lesson): NO field influences a live decision until n>=100 candidates, and
+# then only if its drift separation survives dropping the single best trade.
+# Logged for EVERY seriously-evaluated candidate, entered or skipped —
+# logging only the entries would measure our taste, not the fields.
+
+GUIDANCE_DIRECTION = ("raised", "reaffirmed", "cut", "none", "unclear")
+ONE_TIME_ITEMS = ("clean", "minor", "material", "unclear")
+BACKLOG_REWRITE = ("yes", "no", "unclear")
+TONE_MIN_N_FOR_VERDICT = 100
+
+
+def validate_tone(payload: dict) -> list[str]:
+    """All three fields required — an omitted field is not the same as
+    'unclear', and letting it default would quietly bias the sample toward
+    whatever the brain found easy to read."""
+    errs = []
+    if not str(payload.get("symbol", "")).strip():
+        errs.append("symbol required")
+    if payload.get("guidance_direction") not in GUIDANCE_DIRECTION:
+        errs.append(f"guidance_direction must be one of {GUIDANCE_DIRECTION}")
+    if payload.get("one_time_items") not in ONE_TIME_ITEMS:
+        errs.append(f"one_time_items must be one of {ONE_TIME_ITEMS}")
+    if payload.get("backlog_rewrite") not in BACKLOG_REWRITE:
+        errs.append(f"backlog_rewrite must be one of {BACKLOG_REWRITE}")
+    if payload.get("outcome") not in ("entered", "skipped"):
+        errs.append("outcome must be 'entered' or 'skipped' — logging only "
+                    "entries would measure our taste, not the fields")
+    if not str(payload.get("evidence", "")).strip():
+        errs.append("evidence required — what in the filing/call says this")
+    return errs
+
+
+def score_tone(rows: list[dict], history: dict,
+               today: date | None = None) -> dict:
+    """15-day forward drift grouped by each tone field's value.
+
+    Drift is measured from the LOG-DAY close for every candidate, entered or
+    skipped, so the comparison is like-for-like: this asks whether the field
+    predicts what the stock did, not whether our entries worked.
+    """
+    today = today or date.today()
+    scored, pending = [], 0
+    for r in rows:
+        df = history.get(r["symbol"])
+        if df is None:
+            continue
+        d0 = date.fromisoformat(r["date"])
+        after = [ts for ts in df.index if ts.date() >= d0]
+        if not after or trading_days_between(d0, today) < 15:
+            pending += 1
+            continue
+        window = df.loc[after[0]:].head(16)
+        closes = window["Close"].astype(float)
+        base = float(closes.iloc[0])
+        if len(closes) < 11 or not base:
+            pending += 1
+            continue
+        scored.append({**{k: r[k] for k in
+                          ("symbol", "date", "outcome", "guidance_direction",
+                           "one_time_items", "backlog_rewrite")},
+                       "fwd_15d_pct": round(100 * (float(closes.iloc[-1]) / base - 1), 2)})
+
+    by_field: dict[str, dict] = {}
+    for field in ("guidance_direction", "one_time_items", "backlog_rewrite"):
+        buckets: dict[str, list] = {}
+        for s in scored:
+            buckets.setdefault(s[field], []).append(s["fwd_15d_pct"])
+        by_field[field] = {
+            v: {"n": len(xs), "mean_fwd_15d_pct": round(sum(xs) / len(xs), 2)}
+            for v, xs in sorted(buckets.items())
+        }
+    return {
+        "scored": len(scored), "pending": pending, "by_field": by_field,
+        "verdict_ready": len(scored) >= TONE_MIN_N_FOR_VERDICT,
+        "min_n_for_verdict": TONE_MIN_N_FOR_VERDICT,
+        "caveats": [
+            "measurement only — no field may influence a live decision "
+            f"until n>={TONE_MIN_N_FOR_VERDICT} and the separation survives "
+            "dropping the single best trade (pre-registered 2026-09-24)",
+            "fields are the brain's READING of a filing, so they carry its "
+            "biases; a field that merely restates surprise_pct is not news",
+            "drift is measured from the log-day close for entered AND "
+            "skipped candidates alike, so it is not a P&L claim",
+        ],
+    }
+
+
 # -- exit counterfactuals ------------------------------------------------------
 
 @dataclass

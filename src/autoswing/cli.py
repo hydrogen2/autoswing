@@ -22,6 +22,7 @@ DATA_COMMANDS = (
     "exit-counterfactuals", "log-skip", "skip-outcomes", "fill-quality",
     "backtest", "lesson-pending", "lesson-log", "lessons", "trim-compare",
     "signal-log", "signal-score", "signal-stats", "signal-ingest",
+    "tone-log", "tone-outcomes",
 )
 
 
@@ -186,6 +187,19 @@ def _build_parser() -> argparse.ArgumentParser:
         help="research: record a considered-but-skipped candidate (structured)",
     )
     ls.add_argument("skip", help="skip JSON path, or '-' for stdin")
+
+    tl = sub.add_parser(
+        "tone-log",
+        help="research: record structured earnings-tone fields for a "
+        "candidate (guidance_direction/one_time_items/backlog_rewrite). "
+        "Measurement only — log entries AND skips.",
+    )
+    tl.add_argument("tone", help="tone JSON path, or '-' for stdin")
+
+    sub.add_parser(
+        "tone-outcomes",
+        help="research: 15d forward drift grouped by each tone field value",
+    )
 
     sub.add_parser(
         "skip-outcomes",

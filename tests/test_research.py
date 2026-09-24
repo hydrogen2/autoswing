@@ -404,3 +404,103 @@ class TestDriftExhaustionExit:
         src = inspect.getsource(R)
         assert "PRE-REGISTERED SUCCESS CRITERIA" in src
         assert "single best trade" in src
+
+
+class TestToneLedger:
+    """Earnings-tone fields (green-lit 2026-09-24). The measurement is the
+    reading made BEFORE the outcome — the validation exists to stop the
+    sample being quietly biased."""
+
+    def rec(self, **kw):
+        base = {"symbol": "FPS", "guidance_direction": "raised",
+                "one_time_items": "clean", "backlog_rewrite": "yes",
+                "outcome": "entered", "evidence": "backlog +35% y/y"}
+        base.update(kw)
+        return base
+
+    def test_clean_record(self):
+        from autoswing.research import validate_tone
+        assert validate_tone(self.rec()) == []
+
+    def test_every_field_is_required(self):
+        from autoswing.research import validate_tone
+        for field in ("guidance_direction", "one_time_items", "backlog_rewrite"):
+            r = self.rec()
+            del r[field]
+            assert validate_tone(r), f"{field} was allowed to be missing"
+
+    def test_omitted_is_not_treated_as_unclear(self):
+        # Defaulting a missing field to "unclear" would bias the sample
+        # toward whatever the brain found easy to read.
+        from autoswing.research import validate_tone
+        r = self.rec()
+        del r["one_time_items"]
+        assert "one_time_items" in " ".join(validate_tone(r))
+
+    def test_outcome_must_be_stated(self):
+        from autoswing.research import validate_tone
+        r = self.rec()
+        del r["outcome"]
+        errs = " ".join(validate_tone(r))
+        assert "entered" in errs and "skipped" in errs
+
+    def test_evidence_required(self):
+        from autoswing.research import validate_tone
+        assert validate_tone(self.rec(evidence="  "))
+
+    def test_unclear_is_a_legitimate_value(self):
+        from autoswing.research import validate_tone
+        assert validate_tone(self.rec(guidance_direction="unclear",
+                                      one_time_items="unclear",
+                                      backlog_rewrite="unclear")) == []
+
+
+class TestToneScoring:
+    def frame(self, closes, start="2026-08-03"):
+        return pd.DataFrame(
+            [{"Open": c, "High": c, "Low": c, "Close": c, "Volume": 1}
+             for c in closes], index=pd.bdate_range(start, periods=len(closes)))
+
+    def row(self, symbol, guidance, outcome="entered", d="2026-08-03"):
+        return {"symbol": symbol, "date": d, "outcome": outcome,
+                "guidance_direction": guidance, "one_time_items": "clean",
+                "backlog_rewrite": "no", "evidence": "e"}
+
+    def test_groups_drift_by_field_value(self):
+        from autoswing.research import score_tone
+        hist = {"A": self.frame([100.0] + [110.0] * 15),
+                "B": self.frame([100.0] + [90.0] * 15)}
+        out = score_tone([self.row("A", "raised"), self.row("B", "cut")],
+                         hist, today=date(2026, 9, 24))
+        g = out["by_field"]["guidance_direction"]
+        assert g["raised"]["mean_fwd_15d_pct"] == 10.0
+        assert g["cut"]["mean_fwd_15d_pct"] == -10.0
+
+    def test_skipped_candidates_are_scored_too(self):
+        # Entries only would measure our taste, not the fields.
+        from autoswing.research import score_tone
+        hist = {"A": self.frame([100.0] + [110.0] * 15)}
+        out = score_tone([self.row("A", "raised", outcome="skipped")],
+                         hist, today=date(2026, 9, 24))
+        assert out["scored"] == 1
+
+    def test_too_recent_stays_pending(self):
+        from autoswing.research import score_tone
+        hist = {"A": self.frame([100.0] * 4)}
+        out = score_tone([self.row("A", "raised")], hist,
+                         today=date(2026, 8, 6))
+        assert out["scored"] == 0 and out["pending"] == 1
+
+    def test_verdict_is_gated_on_the_preregistered_n(self):
+        from autoswing.research import TONE_MIN_N_FOR_VERDICT, score_tone
+        hist = {"A": self.frame([100.0] + [110.0] * 15)}
+        out = score_tone([self.row("A", "raised")], hist,
+                         today=date(2026, 9, 24))
+        assert out["verdict_ready"] is False
+        assert out["min_n_for_verdict"] == TONE_MIN_N_FOR_VERDICT == 100
+
+    def test_caveats_travel_with_the_result(self):
+        from autoswing.research import score_tone
+        out = score_tone([], {}, today=date(2026, 9, 24))
+        assert any("no field may influence a live decision" in c
+                   for c in out["caveats"])
