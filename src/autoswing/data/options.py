@@ -146,3 +146,26 @@ def fetch_put_quotes(symbols, collateral_cap: float, today: dt.date | None = Non
         except Exception as ex:
             skipped.append({"symbol": sym, "why": f"fetch_error: {type(ex).__name__}"})
     return quotes, skipped
+
+
+def option_mark(symbol: str, expiry: str, strike: float,
+                kind: str = "put") -> float | None:
+    """Cost to buy back one open contract, per share. Uses the ASK, because
+    closing a short means paying the offer -- marking a liability at the bid
+    would flatter every open cycle."""
+    import yfinance as yf
+
+    try:
+        chain = yf.Ticker(symbol).option_chain(expiry)
+        df = chain.puts if kind == "put" else chain.calls
+        row = df[df.strike == strike]
+        if row.empty:
+            return None
+        ask = float(row.ask.iloc[0])
+        bid = float(row.bid.iloc[0])
+        # A zero ask is a missing quote, not a free unwind.
+        if ask > 0:
+            return round(ask, 4)
+        return round(bid, 4) if bid > 0 else None
+    except Exception:
+        return None

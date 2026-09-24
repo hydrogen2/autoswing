@@ -923,13 +923,14 @@ def _wheel_advance(args, journal: Journal):
 
 
 def _wheel_score(journal: Journal):
+    from ..data.options import option_mark
     from ..data.prices import fetch_history
     from ..wheel import TERMINAL, load_jsonl, score_book
 
     cpath, _ = _wheel_paths()
     cycles = load_jsonl(cpath)
-    open_syms = sorted({c["symbol"] for c in cycles
-                        if c["status"] not in TERMINAL})
+    live = [c for c in cycles if c["status"] not in TERMINAL]
+    open_syms = sorted({c["symbol"] for c in live})
     marks = {}
     if open_syms:
         hist = fetch_history(open_syms, period="1mo")
@@ -937,7 +938,19 @@ def _wheel_score(journal: Journal):
             df = hist.get(s)
             if df is not None and len(df):
                 marks[s] = round(float(df["Close"].iloc[-1]), 4)
-    result = score_book(cycles, marks)
+    # An open short option is a liability; mark it at the ask or report the
+    # cycle as pending rather than booking the premium as if already earned.
+    omarks = {}
+    for c in live:
+        if c["status"] == "csp_open":
+            m = option_mark(c["symbol"], c["expiry"], c["strike"], "put")
+        elif c["status"] == "cc_open":
+            m = option_mark(c["symbol"], c["call_expiry"], c["call_strike"], "call")
+        else:
+            m = None
+        if m is not None:
+            omarks[c["id"]] = m
+    result = score_book(cycles, marks, omarks)
     journal.record("wheel.scored", n_cycles=result["n_cycles"],
                    n_closed=result["n_closed"],
                    vs_hold_usd=result.get("vs_hold_usd"),

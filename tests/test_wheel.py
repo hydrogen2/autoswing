@@ -300,3 +300,45 @@ def test_validate_accepts_a_complete_payload():
                            "expiry": "2026-10-16", "strike": 45,
                            "premium_received": 1.0, "spot_at_open": 49.0,
                            "note": "would own it here"}) == []
+
+
+# --- open option legs are liabilities, not income -----------------------------
+
+def test_open_put_without_option_mark_is_pending_not_profitable():
+    """Booking the premium the day it is sold would show the book in profit
+    for the whole life of every contract."""
+    r = cycle_pnl(base_cycle(), mark=49.0)
+    assert r["pending"] is True
+    assert "liability" in r["reason"]
+
+
+def test_open_put_nets_the_buyback_cost():
+    # Sold for 1.00, now costs 1.60 to close: that is a 60 dollar loss.
+    r = cycle_pnl(base_cycle(), mark=45.5, option_mark=1.60)
+    assert r["pending"] is False
+    assert r["premium_usd"] == pytest.approx(-60.0)
+
+
+def test_open_put_that_decayed_shows_partial_gain():
+    r = cycle_pnl(base_cycle(), mark=49.5, option_mark=0.40)
+    assert r["premium_usd"] == pytest.approx(60.0)
+    assert r["total_pnl_usd"] == pytest.approx(60.0)
+
+
+def test_assigned_cycle_needs_no_option_mark():
+    """Once assigned there is no live short option -- only shares."""
+    c = advance(base_cycle(), "assign", "2026-10-16")
+    r = cycle_pnl(c, mark=43.0)
+    assert r["pending"] is False
+    assert r["stock_pnl_usd"] == pytest.approx(-200.0)
+
+
+def test_score_book_routes_option_marks_by_cycle_id():
+    a = base_cycle(id="a", symbol="AA")
+    b = base_cycle(id="b", symbol="AA", strike=40.0)
+    out = score_book([a, b], marks={"AA": 46.0},
+                     option_marks={"a": 0.50, "b": 0.10})
+    assert out["n_pending_mark"] == 0
+    prem = {r["id"]: r["premium_usd"] for r in out["rows"]}
+    assert prem["a"] == pytest.approx(50.0)
+    assert prem["b"] == pytest.approx(90.0)

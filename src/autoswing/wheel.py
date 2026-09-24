@@ -287,12 +287,16 @@ def advance(cycle: dict, event: str, on: str, price: float | None = None,
     return c
 
 
-def cycle_pnl(cycle: dict, mark: float | None = None) -> dict:
+def cycle_pnl(cycle: dict, mark: float | None = None,
+              option_mark: float | None = None) -> dict:
     """P&L for a cycle, and the only comparison that matters beside it:
     the same collateral put into the stock at spot_at_open.
 
-    mark is required for cycles still holding shares; a terminal cycle
-    ignores it."""
+    mark (stock) is required for any live cycle. option_mark is the cost to
+    BUY BACK the open contract, and it is also required while an option leg
+    is live: booking the whole premium the day it is sold would show this
+    book in profit for the entire life of every contract and only reveal the
+    loss at expiry. An open short option is a liability, not income."""
     contracts = cycle.get("contracts", 1)
     shares = 100 * contracts
     prem = cycle.get("premium_received", 0.0) * shares
@@ -309,8 +313,17 @@ def cycle_pnl(cycle: dict, mark: float | None = None) -> dict:
         exit_ref = cycle["call_strike"]
     else:
         if mark is None:
-            return {"pending": True, "reason": "mark required for open cycle"}
+            return {"pending": True, "id": cycle["id"], "symbol": cycle["symbol"],
+                    "status": st, "reason": "stock mark required for open cycle"}
+        if st in ("csp_open", "cc_open") and option_mark is None:
+            return {"pending": True, "id": cycle["id"], "symbol": cycle["symbol"],
+                    "status": st,
+                    "reason": "option mark required — an open short option is "
+                              "a liability, not banked premium"}
         stock_pnl = (mark - strike) * shares if cycle.get("shares") else 0.0
+        # Unwind cost of the live contract, netted against premium taken in.
+        if option_mark is not None and st in ("csp_open", "cc_open"):
+            prem -= option_mark * shares
         exit_ref = mark
 
     total = round(prem + stock_pnl, 2)
@@ -340,12 +353,17 @@ def cycle_pnl(cycle: dict, mark: float | None = None) -> dict:
     }
 
 
-def score_book(cycles: list[dict], marks: dict | None = None) -> dict:
-    """Scoreboard. Reports vs_hold first and premium last, deliberately."""
+def score_book(cycles: list[dict], marks: dict | None = None,
+               option_marks: dict | None = None) -> dict:
+    """Scoreboard. Reports vs_hold first and premium last, deliberately.
+
+    option_marks is keyed by cycle id, since two cycles on one symbol can
+    hold different contracts."""
     marks = marks or {}
+    option_marks = option_marks or {}
     scored, pending = [], 0
     for c in cycles:
-        r = cycle_pnl(c, marks.get(c["symbol"]))
+        r = cycle_pnl(c, marks.get(c["symbol"]), option_marks.get(c["id"]))
         if r.get("pending"):
             pending += 1
         else:
