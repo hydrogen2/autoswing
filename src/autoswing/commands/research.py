@@ -112,6 +112,14 @@ def _dispatch_data(config, journal: Journal, args):
         return _backtest(config, journal, args)
     if args.command == "trim-compare":
         return _trim_compare(journal, args)
+    if args.command == "wheel-screen":
+        return _wheel_screen(args, journal)
+    if args.command == "wheel-log":
+        return _wheel_log(args, journal)
+    if args.command == "wheel-advance":
+        return _wheel_advance(args, journal)
+    if args.command == "wheel-score":
+        return _wheel_score(journal)
     if args.command == "signal-ingest":
         return _signal_ingest(journal, args)
     if args.command == "signal-log":
@@ -809,3 +817,129 @@ def _forecast_score(journal: Journal):
                    awaiting_actuals=still_pending, results=results)
     return {"scored": len(results), "awaiting_actuals": still_pending,
             "results": results}
+
+
+# -- wheel book ----------------------------------------------------------------
+
+def _wheel_paths():
+    from ..config import PROJECT_ROOT
+
+    d = PROJECT_ROOT / "state" / "wheel"
+    return d / "cycles.jsonl", d / "screens.jsonl"
+
+
+def _wheel_screen(args, journal: Journal):
+    """Screen cash-secured puts and persist the snapshot.
+
+    The snapshot is the point: yfinance has no option history, so a quote not
+    written down today is gone tomorrow. Persisting every screen builds the
+    IV-vs-subsequent-realized record that no free backtest can supply.
+    """
+    import datetime as dt
+
+    from ..data.options import fetch_put_quotes
+    from ..wheel import append_jsonl, screen
+
+    syms = [s.strip().upper() for s in args.symbols.split(",") if s.strip()]
+    quotes, skipped = fetch_put_quotes(
+        syms, args.collateral_cap, dte_min=args.dte_min, dte_max=args.dte_max)
+    result = screen(quotes, args.collateral_cap)
+    result["skipped"] = skipped
+    result["collateral_cap"] = args.collateral_cap
+
+    _, spath = _wheel_paths()
+    stamp = dt.date.today().isoformat()
+    for row in result["all"]:
+        append_jsonl(spath, {"screened_on": stamp, **row})
+
+    journal.record("wheel.screened", evaluated=result["evaluated"],
+                   passing=result["passing"], skipped=len(skipped),
+                   rejection_tally=result["rejection_tally"],
+                   candidates=[c["symbol"] for c in result["candidates"]])
+    if not args.all:
+        result.pop("all", None)
+    return result
+
+
+def _wheel_log(args, journal: Journal):
+    from datetime import datetime, timezone
+
+    from ..wheel import (
+        append_jsonl, cycle_id, load_jsonl, validate_cycle,
+    )
+
+    raw = sys.stdin.read() if args.cycle == "-" else open(args.cycle).read()
+    payload = json.loads(raw)
+    errs = validate_cycle(payload)
+    if errs:
+        raise ValueError("invalid cycle: " + "; ".join(errs))
+
+    symbol = payload["symbol"].strip().upper()
+    cid = cycle_id(symbol, payload["opened"], float(payload["strike"]))
+    cpath, _ = _wheel_paths()
+    if any(c["id"] == cid for c in load_jsonl(cpath)):
+        raise ValueError(f"cycle {cid} already open")
+
+    contracts = int(payload.get("contracts", 1))
+    entry = {
+        "id": cid, "symbol": symbol, "status": "csp_open",
+        "opened": payload["opened"], "strike": float(payload["strike"]),
+        "expiry": payload["expiry"],
+        "premium_received": float(payload["premium_received"]),
+        "spot_at_open": float(payload["spot_at_open"]),
+        "collateral": float(payload["strike"]) * 100 * contracts,
+        "contracts": contracts, "shares": 0,
+        "call_strike": None, "call_expiry": None,
+        "closed": None, "exit_price": None, "legs": [],
+        "note": payload["note"].strip(),
+        "logged_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    }
+    append_jsonl(cpath, entry)
+    journal.record("wheel.cycle_opened", **{k: entry[k] for k in
+                   ("id", "symbol", "strike", "expiry", "premium_received",
+                    "spot_at_open", "collateral")})
+    return {"opened": cid, "collateral": entry["collateral"],
+            "net_cost_basis_if_assigned": round(
+                entry["strike"] - entry["premium_received"], 4)}
+
+
+def _wheel_advance(args, journal: Journal):
+    from ..wheel import advance, load_jsonl, write_jsonl
+
+    cpath, _ = _wheel_paths()
+    cycles = load_jsonl(cpath)
+    idx = next((i for i, c in enumerate(cycles) if c["id"] == args.cycle_id), None)
+    if idx is None:
+        raise ValueError(f"no cycle {args.cycle_id}")
+
+    cycles[idx] = advance(cycles[idx], args.event, args.on, price=args.price,
+                          premium=args.premium, strike=args.strike,
+                          expiry=args.expiry)
+    write_jsonl(cpath, cycles)
+    journal.record("wheel.advanced", cycle_id=args.cycle_id, event=args.event,
+                   on=args.on, status=cycles[idx]["status"])
+    return {"id": args.cycle_id, "status": cycles[idx]["status"],
+            "event": args.event}
+
+
+def _wheel_score(journal: Journal):
+    from ..data.prices import fetch_history
+    from ..wheel import TERMINAL, load_jsonl, score_book
+
+    cpath, _ = _wheel_paths()
+    cycles = load_jsonl(cpath)
+    open_syms = sorted({c["symbol"] for c in cycles
+                        if c["status"] not in TERMINAL})
+    marks = {}
+    if open_syms:
+        hist = fetch_history(open_syms, period="1mo")
+        for s in open_syms:
+            df = hist.get(s)
+            if df is not None and len(df):
+                marks[s] = round(float(df["Close"].iloc[-1]), 4)
+    result = score_book(cycles, marks)
+    journal.record("wheel.scored", n_cycles=result["n_cycles"],
+                   n_closed=result["n_closed"],
+                   vs_hold_usd=result.get("vs_hold_usd"),
+                   verdict=result.get("verdict"))
+    return result

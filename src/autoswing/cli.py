@@ -23,6 +23,7 @@ DATA_COMMANDS = (
     "backtest", "lesson-pending", "lesson-log", "lessons", "trim-compare",
     "signal-log", "signal-score", "signal-stats", "signal-ingest",
     "tone-log", "tone-outcomes",
+    "wheel-screen", "wheel-log", "wheel-advance", "wheel-score",
 )
 
 
@@ -263,6 +264,52 @@ def _build_parser() -> argparse.ArgumentParser:
         "hit rate at 5/15/60 sessions)",
     )
     ss.add_argument("--source", default=None)
+
+    ws = sub.add_parser(
+        "wheel-screen",
+        help="wheel book: screen sub-cap cash-secured puts. Ranks by DOLLAR "
+        "edge net of half the spread, not by yield; rejects negative "
+        "variance premium, earnings inside the contract, and unexplained "
+        "front-month richness. Measurement only.",
+    )
+    ws.add_argument("symbols", help="comma-separated tickers")
+    ws.add_argument("--collateral-cap", type=float, default=4900.0,
+                    help="max strike*100 per contract (default: 10%% position cap)")
+    ws.add_argument("--dte-min", type=int, default=20)
+    ws.add_argument("--dte-max", type=int, default=60)
+    ws.add_argument("--all", action="store_true",
+                    help="include rejected candidates with their reasons")
+
+    wl = sub.add_parser(
+        "wheel-log",
+        help="wheel book: open a paper cycle by selling a cash-secured put. "
+        "Requires spot_at_open (the buy-and-hold benchmark entry) and a note "
+        "saying why the name is worth owning at the strike.",
+    )
+    wl.add_argument("cycle", help="cycle JSON path, or '-' for stdin")
+
+    wa = sub.add_parser(
+        "wheel-advance",
+        help="wheel book: move a cycle through its state machine "
+        "(expire_worthless / assign / sell_call / call_away). Every "
+        "transition is explicit; assignment is never inferred from a bar.",
+    )
+    wa.add_argument("cycle_id")
+    wa.add_argument("event", choices=["expire_worthless", "assign",
+                                      "sell_call", "call_away"])
+    wa.add_argument("--on", required=True, help="date YYYY-MM-DD")
+    wa.add_argument("--price", type=float, default=None)
+    wa.add_argument("--premium", type=float, default=None,
+                    help="per-share premium (sell_call)")
+    wa.add_argument("--strike", type=float, default=None)
+    wa.add_argument("--expiry", default=None)
+
+    sub.add_parser(
+        "wheel-score",
+        help="wheel book: scoreboard vs buy-and-hold of the same stock with "
+        "the same money, and vs cash. Premium collected is reported last, "
+        "on purpose.",
+    )
 
     sub.add_parser(
         "lesson-pending",

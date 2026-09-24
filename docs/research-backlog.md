@@ -17,12 +17,20 @@ zero new capital risk, and answer a named decision.
 | 7 | Fill-quality baseline | 2026-08-31 | What does paper slippage translate to live? (28 fills: mean +44bps vs limit, paper-flattered) |
 | 8 | Insider-buying enrichment | 2026-09-08 | Does Form 4 cluster buying predict drift? (measurement-only to ~100 candidates) |
 | 9 | External-signal ledger | 2026-09-08 | Does following anyone's disclosed buys beat their own benchmark? (sources: insider Form 4, congress, hand-logged accounts) |
+| 10 | Wheel book (cash-secured puts) | 2026-09-24 | Does selling puts on names we would own beat simply owning them? (verdict at 40 closed cycles) |
 
 ## Queued (not started)
 
 - **Forecast monetization (v3 options overlay)** — defined-risk structures
-  on high-confidence forecasts. HARD-BLOCKED on: forecast deep tier showing
-  calibrated edge at n>=100; owner decision; options approval + paid data.
+  on high-confidence forecasts. Still blocked on: forecast deep tier showing
+  calibrated edge at n>=100; owner decision; IBKR options permission.
+  CORRECTION 2026-09-24: the "paid data" half of this blocker was wrong.
+  yfinance serves full live chains (strike/bid/ask/IV/volume/OI) for free,
+  which is enough to SCREEN and to measure forward. What it does not serve
+  is option HISTORY, so nothing in options can be backtested here — and
+  approximating past premiums from realized vol would zero out the
+  implied-minus-realized gap that is the entire edge. Options work in this
+  repo is therefore forward-measured or not done at all.
 - **Earnings-call tone as structured field** — guidance direction /
   one-time-items flags logged per candidate instead of freeform rationale;
   regress drift against them at ~100 candidates.
