@@ -39,6 +39,7 @@ def _dispatch(broker: Broker, args):
         gate = _make_gate(broker)
         status = gate.status(broker.account_state())
         status["sizing_caps"] = _sizing_caps(gate.cfg, status["virtual_equity"])
+        status["now_et"] = _now_et()
         return status
     if args.command == "gate-reset":
         if not args.i_am_sure:
@@ -84,6 +85,20 @@ def _sizing_caps(risk_cfg: dict, virtual_equity: float) -> dict:
         "max_gross_exposure_dollars": round(
             virtual_equity * float(risk_cfg["max_gross_exposure_pct"]) / 100.0, 2),
     }
+
+
+def _now_et(now=None) -> str:
+    """Current ET timestamp with the weekday spelled out. The brain computes
+    'today' itself and got the weekday wrong on 2026-09-24 (ran the
+    Wednesday-only wheel book on a Thursday) and again on 09-25 (called
+    Friday 'Thursday') — so gate-status, which it reads every window, now
+    states it. Same remedy as _sizing_caps above."""
+    from datetime import datetime
+
+    from ..calendar import ET
+
+    now = now if now is not None else datetime.now(ET)
+    return now.astimezone(ET).strftime("%A %Y-%m-%d %H:%M ET")
 
 
 def _make_gate(broker: Broker):
