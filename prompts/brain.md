@@ -100,6 +100,15 @@ You will be told which window this run is. Do that window's checklist only.
    you need is broken, work around it or stand down loudly.
 2. `get-positions`, `manage-positions` (report mode) — note anything
    flagged for exit later today.
+2a. STALE ENTRY CHECK. Since 2026-09-29 entry parents are placed with
+   TIF=DAY, so an entry that did not fill yesterday should be GONE this
+   morning, children with it (the exit legs are GTC and only live once the
+   entry fills). If get-positions shows any working ENTRY order from a
+   prior session, IB did not expire it: `cancel-order <parent id>`, confirm
+   its children went too, and journal-note it LOUDLY as "DAY expiry failed"
+   with the order ids — that is a defect report, not housekeeping. Never
+   assume an unfilled order expired; look. The first clean morning after
+   an unfilled entry is the proof the DAY TIF works — journal that too.
 2b. EX-DIVIDEND STOP CHECK. Each row carries `next_ex_dividend`
    ("none" means verified no upcoming dividend; "unknown" means we could
    not check — treat unknown as a reason to look, not as a "no"). If a held
@@ -284,9 +293,23 @@ You will be told which window this run is. Do that window's checklist only.
 ### preclose (~15:30 ET)
 1. `manage-positions --enforce` — this executes the deterministic time-box
    and pre-earnings exits. Report what it closed.
-2. For remaining positions: judge drift health (drift_since_pct fading badly
-   two days in a row = drift exhausted -> reasonable to exit early; note it
-   for tomorrow or exit now if clearly dead).
+2. For remaining positions: judge drift health and FLAG it — do not exit on
+   judgement alone. Two things make "exit now if clearly dead" the wrong
+   instruction, and both are settled:
+   - There is no sanctioned single-position close. `manage-positions
+     --enforce` executes the deterministic exits; `flatten-all` is an
+     emergency hammer and closing the whole book to trim one name is worse
+     than holding it. An instruction with no executor is an unkeepable
+     promise (2026-09-03), and on 09-24 SUNB's case fired with nothing to
+     act with.
+   - Cutting early on faded drift was TESTED and BINNED (2026-09-15): it
+     failed both pre-registered criteria — more wins but less money, because
+     early cuts truncate the runners that pay for the losers.
+   So: journal the observation with the numbers (drift_since_pct, which two
+   sessions faded, days left on the timebox, distance to stop) and let the
+   deterministic timebox and stop do their job. If a position is dead for a
+   THESIS reason rather than a drift reason — fraud, guidance cut, halt —
+   that is the midday step-2 path, not this one.
 3. `benchmark-mark` — record the daily equity vs VOO mark.
 3b. `shadow-mark` — close out virtual positions (both v2 and wide-PEAD
    books) that hit stop/target/timebox; mention any shadow closes (with

@@ -31,7 +31,11 @@ class BracketProposal:
     entry_limit: float
     stop_loss: float
     take_profit: float
-    time_in_force: str = "GTC"
+    # TIF for the ENTRY PARENT only; the exit legs are always GTC (see
+    # place_bracket_order). An unfilled entry must die at the close: PEAD
+    # entries are reaction-day theses, and on 2026-09-24 a GTC parent (CBRL)
+    # silently survived overnight -- an order believed dead was live all night.
+    entry_tif: str = "DAY"
 
 
 class Broker:
@@ -189,8 +193,19 @@ class Broker:
             takeProfitPrice=p.take_profit,
             stopLossPrice=p.stop_loss,
         )
+        # Parent and children take DIFFERENT TIFs, and collapsing them is
+        # dangerous in either direction:
+        #   - all GTC: an unfilled entry survives overnight (the CBRL bug).
+        #   - all DAY: once the entry FILLS, the stop and target expire at the
+        #     close and the position sits unprotected overnight -- far worse.
+        # So the parent is DAY and the protective legs are always GTC. If the
+        # parent never fills, IB cancels its children with it, exactly as it
+        # did for the explicit cancel of parent 314 on 2026-09-25.
+        parent, take_profit, stop_loss = bracket
+        parent.tif = p.entry_tif
+        take_profit.tif = "GTC"
+        stop_loss.tif = "GTC"
         for order in bracket:
-            order.tif = p.time_in_force
             order.outsideRth = False
 
         trades = [self.ib.placeOrder(contract, o) for o in bracket]
@@ -365,6 +380,8 @@ class Broker:
 
 
 def _validate_bracket(p: BracketProposal) -> None:
+    if p.entry_tif not in ("DAY", "GTC"):
+        raise ValueError(f"entry_tif must be DAY or GTC, got {p.entry_tif!r}")
     if p.action.upper() not in ("BUY", "SELL"):
         raise ValueError(f"action must be BUY or SELL, got {p.action!r}")
     if p.quantity <= 0 or int(p.quantity) != p.quantity:

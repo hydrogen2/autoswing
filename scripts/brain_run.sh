@@ -66,6 +66,16 @@ fi
 cd "$REPO"
 # Lets window-scoped commands (benchmark-mark: preclose-only) self-enforce.
 export AUTOSWING_WINDOW="$WINDOW"
+
+# The weekday, injected as a FACT rather than left to be derived. The brain
+# miscomputed it twice running (2026-09-24 Thursday read as Wednesday, which
+# ran the weekly wheel book off-schedule; 2026-09-25 Friday read as Thursday).
+# ee5c980 mitigates by returning now_et from gate-status, but a prompt-side
+# read of a field is softer than an injected fact: the brain has to choose to
+# look. This cannot be wrong, and day-scoped work (the Wednesday wheel run,
+# "tomorrow" in a preclose digest) depends on it being right.
+TODAY_ET="$(TZ=America/New_York date '+%A %Y-%m-%d')"
+export AUTOSWING_TODAY_ET="$TODAY_ET"
 OK=0
 ACTIVE_MODEL="$MODEL_PRIMARY"
 FELL_BACK=0
@@ -83,7 +93,8 @@ FELL_BACK=0
     RC=0
     timeout --kill-after=60 2400 claude -p "$(cat prompts/brain.md)
 
-TODAY'S RUN WINDOW: $WINDOW" \
+TODAY'S RUN WINDOW: $WINDOW
+TODAY (ET): $TODAY_ET" \
       --model "$ACTIVE_MODEL" \
       --settings config/brain-settings.json \
       --max-turns 60 \
