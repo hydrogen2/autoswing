@@ -195,7 +195,10 @@ You will be told which window this run is. Do that window's checklist only.
    reuse the proposal as-is. This opens VIRTUAL positions only and never
    affects the live book.
 6. V2 SHADOW (after PEAD work; skip entirely if time is short — PEAD always
-   has priority). Act on the candidates CONFIRMED AT YESTERDAY'S PRECLOSE
+   has priority). The book runs until the OWNER retires it. shadow-status
+   carries a pre-registered verdict (v2.preregistered_verdict); whatever it
+   says — including "bin" — keep taking v2 entries exactly as below. Only
+   the owner stops this book. Act on the candidates CONFIRMED AT YESTERDAY'S PRECLOSE
    (step 3d below) — their volume_ratio was measured on a completed
    session. Do NOT judge volume from this window's `scan-movers`: an
    intraday bar is a partial numerator over a full-day average, so the

@@ -94,3 +94,38 @@ def test_exactly_zero_is_not_below_zero():
     """Literal reading of '< 0', written down so it is not argued later."""
     rows = [row(0, 0.0)] * V2_VERDICT_N
     assert v2_verdict(rows)["verdict"] != "bin"
+
+
+# --- once-only owner alert (ruling 2026-09-29) --------------------------------
+
+from autoswing.shadow import verdict_alert
+
+
+def test_no_alert_while_pending():
+    assert verdict_alert(v2_verdict([row(-50, -1.0)] * 12), None) is None
+
+
+def test_alerts_when_verdict_lands_and_says_nothing_was_stopped():
+    body = verdict_alert(v2_verdict([row(-40, -1.0)] * V2_VERDICT_N), None)
+    assert body is not None
+    assert "BIN" in body
+    assert "NOTHING HAS BEEN STOPPED" in body
+    assert "Keep it running longer" in body
+
+
+def test_alerts_only_once_per_verdict():
+    v = v2_verdict([row(-40, -1.0)] * V2_VERDICT_N)
+    assert verdict_alert(v, {"verdict": "bin"}) is None
+
+
+def test_a_changed_verdict_alerts_again():
+    """Only possible if the ledger itself is corrected -- which is exactly
+    when the owner needs to hear about it."""
+    v = v2_verdict([row(40, 0.8)] * V2_VERDICT_N)
+    assert verdict_alert(v, {"verdict": "bin"}) is not None
+
+
+def test_positive_verdicts_alert_too():
+    """A promotion discussion is a decision point as much as a bin."""
+    body = verdict_alert(v2_verdict([row(40, 0.8)] * V2_VERDICT_N), None)
+    assert "PROMOTION_DISCUSSION" in body

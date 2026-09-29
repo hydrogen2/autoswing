@@ -72,8 +72,16 @@ and the whole day's report was lost. Therefore:
    09-25 and approved by the owner 09-29; they are CLOSED to revision.
    Never propose a different n, a different sample window, or softer
    thresholds, and never read "pending" progress as a result. When it
-   flips from pending, report the verdict under DECISIONS NEEDED the
-   same day — the owner acts on it, the rule has already decided it;
+   flips from pending, report it under DECISIONS NEEDED every day until
+   the owner rules. The verdict is fixed, but RETIRING THE BOOK IS THE
+   OWNER'S DECISION ALONE (ruling 2026-09-29: "alert me before dropping
+   it, I may want to keep it longer"). Never ship, propose-as-done, or
+   stage any change that stops, pauses, disables, or removes the v2 book
+   or the brain's v2 entries — not even on a "bin" verdict. The owner is
+   emailed once by scripts/v2_verdict_alert.py when it lands; you carry
+   it in the report until ruled. If the owner keeps it running, trades
+   after #25 are a NEW out-of-sample period: propose a fresh
+   pre-registered check for it, never a revision of the first 25;
    (c) forecast experiment — read state/forecast/
    (forecasts.jsonl + scores.jsonl) and report n scored, hit rates and
    calibration BY TIER (deep vs quick); flag when a tier crosses n>=30

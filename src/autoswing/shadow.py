@@ -295,3 +295,53 @@ def v2_verdict(rows: list[dict]) -> dict:
         out.update(verdict="promotion_discussion",
                    reasons=["both criteria hold with each best trade removed"])
     return out
+
+
+# --- verdict alert (owner ruling 2026-09-29) ---------------------------------
+# "Alert me before dropping it, I may want to keep it longer." Nothing in the
+# system stops the v2 book on its own -- the verdict only reports -- and that
+# is deliberate: retiring it is the owner's decision. This makes sure the
+# owner hears about the verdict directly, ONCE, rather than finding it as one
+# line in a routine report.
+
+def verdict_alert(verdict: dict, already_alerted: dict | None) -> str | None:
+    """The alert body when the verdict is new and non-pending, else None.
+
+    Alerts once per distinct verdict: a flip from pending, or a later change
+    (which should only happen if the ledger itself is corrected)."""
+    v = verdict.get("verdict")
+    if v in (None, "pending"):
+        return None
+    if already_alerted and already_alerted.get("verdict") == v:
+        return None
+
+    lines = [
+        f"news-v2 shadow book: pre-registered verdict = {v.upper()}",
+        "",
+        "NOTHING HAS BEEN STOPPED. The v2 shadow book keeps running until you",
+        "rule; no agent is permitted to retire, pause, or alter it.",
+        "",
+        f"Rule (registered {verdict.get('registered')}): {verdict.get('rule')}",
+        "",
+        f"First {verdict.get('sample_n')} closes: total P&L {verdict.get('total_pnl')}, "
+        f"avg alpha {verdict.get('avg_alpha_pct')}% (alpha on "
+        f"{verdict.get('alpha_n')}/{verdict.get('sample_n')} rows).",
+    ]
+    if "total_pnl_ex_best" in verdict:
+        lines.append(f"Without best trade: P&L {verdict['total_pnl_ex_best']}, "
+                     f"avg alpha {verdict.get('avg_alpha_pct_ex_best')}%.")
+    for r in verdict.get("reasons", []):
+        lines.append(f"  - {r}")
+    lines += [
+        "",
+        "Your options:",
+        "  (a) Retire the book as the rule says.",
+        "  (b) Keep it running longer. That is your call and costs nothing,",
+        "      but the verdict on the first 25 stands as recorded -- trades",
+        "      after #25 are a NEW, out-of-sample period, not a rescue of the",
+        "      old one. So that 'longer' has an end, set a fresh pre-registered",
+        "      check for it now (e.g. the next 25 closes, same thresholds).",
+        "",
+        f"Closed so far in total: {verdict.get('closed_total')}.",
+    ]
+    return "\n".join(lines) + "\n"

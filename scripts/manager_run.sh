@@ -108,3 +108,10 @@ if [ ! -f "$REPORT_FILE" ] || [ ! "$REPORT_FILE" -nt "$STAMP" ]; then
     || echo "$(date -Is) alert email FAILED too — see $ALERT" >>"$LOG"
 fi
 rm -f "$STAMP"
+
+# Pre-registered news-v2 verdict: email the owner ONCE when it lands (owner
+# ruling 2026-09-29 -- the book is never retired without them). Deterministic
+# and independent of the manager model; guarded so a failure here can never
+# take down the nightly run under set -e. A failed send retries next night.
+( cd "$REPO" && uv run python scripts/v2_verdict_alert.py ) >>"$LOG" 2>&1 \
+  || echo "$(date -Is) v2 verdict alert check failed (will retry tomorrow)" >>"$LOG"
