@@ -151,7 +151,7 @@ def _alpha(event: dict, bench_df) -> float | None:
 
 
 def _shadow_status():
-    from ..shadow import ledger_stats, load_book
+    from ..shadow import ledger_stats, load_book, load_ledger, v2_verdict
 
     out = {}
     for label, wide in (("v2", False), ("wide", True)):
@@ -161,4 +161,8 @@ def _shadow_status():
             "open": [p.__dict__ for p in book.values()],
             "ledger": ledger_stats(ledger_path),
         }
+        if label == "v2":
+            # Pre-registered 2026-09-29; the report quotes this, it does not
+            # recompute or reinterpret it.
+            out[label]["preregistered_verdict"] = v2_verdict(load_ledger(ledger_path))
     return out

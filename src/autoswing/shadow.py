@@ -184,3 +184,114 @@ def ledger_stats(ledger_path: Path) -> dict:
             "total_pnl": round(total, 2),
             "avg_alpha_pct": round(sum(alphas) / len(alphas), 2) if alphas else None,
             "alpha_n": len(alphas)}
+
+
+# --- pre-registered news-v2 verdict -------------------------------------------
+# Proposed by the manager 2026-09-25 at 11 closed (2W/9L, -$551), approved by
+# the owner 2026-09-29 at 12 closed (2W/10L, -$927). Registered MID-SAMPLE on
+# purpose: criteria written before the result is known cannot be bent toward
+# it, in either direction -- no premature binning on a losing streak, and no
+# "let's give it a few more" when the 25th close disappoints.
+#
+# The rule, verbatim from the proposal:
+#   at 25 closed, bin the strategy if avg alpha < 0 or total P&L < 0;
+#   anything better earns a promotion DISCUSSION only if it survives
+#   dropping the best trade.
+#
+# Two definitions the proposal left open, fixed here so they cannot be chosen
+# after the fact:
+#   - The sample is the FIRST 25 closes in ledger order. Scoring "all closes
+#     so far" would let a disappointing verdict be re-read later, once a few
+#     more trades had moved the number -- renegotiation by waiting.
+#   - "Dropping the best trade" removes each criterion's own best: the top-P&L
+#     trade for the P&L test, the top-alpha trade for the alpha test. That is
+#     the stricter reading; one outlier cannot carry either leg.
+# Changing any of this is a dated, deliberate edit that says so -- never a
+# quiet one.
+V2_VERDICT_N = 25
+V2_VERDICT_REGISTERED = "2026-09-29"
+V2_VERDICT_RULE = ("at 25 closed: bin if avg alpha < 0 or total P&L < 0; "
+                   "otherwise a promotion discussion only if both criteria "
+                   "still hold with each one's best trade removed")
+
+
+def load_ledger(ledger_path: Path) -> list[dict]:
+    if not ledger_path.exists():
+        return []
+    return [json.loads(l) for l in ledger_path.read_text().splitlines() if l.strip()]
+
+
+def _pnl_alpha(rows: list[dict]) -> tuple[float, float | None, int]:
+    total = round(sum(r["pnl"] for r in rows), 2)
+    alphas = [r["alpha_pct"] for r in rows
+              if isinstance(r.get("alpha_pct"), (int, float))]
+    avg = round(sum(alphas) / len(alphas), 3) if alphas else None
+    return total, avg, len(alphas)
+
+
+def _without_best(rows: list[dict], key) -> list[dict]:
+    if not rows:
+        return rows
+    best = max(range(len(rows)), key=lambda i: key(rows[i]))
+    return rows[:best] + rows[best + 1:]
+
+
+def v2_verdict(rows: list[dict]) -> dict:
+    """The pre-registered verdict. Below 25 closed it reports progress only;
+    the numbers are shown so the trajectory is visible, but they are labelled
+    as not-a-result."""
+    sample = rows[:V2_VERDICT_N]
+    n = len(sample)
+    total, avg, alpha_n = _pnl_alpha(sample)
+    out = {
+        "rule": V2_VERDICT_RULE,
+        "registered": V2_VERDICT_REGISTERED,
+        "required_n": V2_VERDICT_N,
+        "sample_n": n,
+        "closed_total": len(rows),
+        "total_pnl": total,
+        "avg_alpha_pct": avg,
+        "alpha_n": alpha_n,
+        "alpha_incomplete": alpha_n < n,
+    }
+    if n < V2_VERDICT_N:
+        out.update(verdict="pending", remaining=V2_VERDICT_N - n,
+                   note="progress, not a result: no verdict before "
+                        f"{V2_VERDICT_N} closed")
+        return out
+    if avg is None:
+        # Every row lacks alpha: the alpha criterion cannot be evaluated, and
+        # a missing leg is never read as a passing one.
+        out.update(verdict="undeterminable",
+                   reasons=["no alpha on any row in the sample"])
+        return out
+
+    reasons = []
+    if avg < 0:
+        reasons.append(f"avg alpha {avg}% < 0")
+    if total < 0:
+        reasons.append(f"total P&L {total} < 0")
+    if reasons:
+        out.update(verdict="bin", reasons=reasons)
+        return out
+
+    pnl_ex_best, _, _ = _pnl_alpha(_without_best(sample, lambda r: r["pnl"]))
+    alpha_rows = [r for r in sample if isinstance(r.get("alpha_pct"), (int, float))]
+    _, alpha_ex_best, _ = _pnl_alpha(
+        _without_best(alpha_rows, lambda r: r["alpha_pct"]))
+    out.update(total_pnl_ex_best=pnl_ex_best,
+               avg_alpha_pct_ex_best=alpha_ex_best)
+    fragile = []
+    if pnl_ex_best < 0:
+        fragile.append(f"total P&L without best trade {pnl_ex_best} < 0")
+    if alpha_ex_best is None or alpha_ex_best < 0:
+        fragile.append(f"avg alpha without best trade {alpha_ex_best} < 0")
+    if fragile:
+        # Not binned by the rule, but it does not earn a promotion discussion
+        # either: the result rests on one trade. What happens next is the
+        # owner's call, and the rule does not pretend otherwise.
+        out.update(verdict="no_promotion_rests_on_one_trade", reasons=fragile)
+    else:
+        out.update(verdict="promotion_discussion",
+                   reasons=["both criteria hold with each best trade removed"])
+    return out

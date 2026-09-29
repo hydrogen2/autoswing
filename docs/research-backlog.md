@@ -9,7 +9,7 @@ zero new capital risk, and answer a named decision.
 | # | Instrument | Started | Question it answers |
 |---|---|---|---|
 | 1 | Live PEAD ledger | 2026-07-09 | Does the drift edge pay? (verdict at 100 trades) |
-| 2 | News-v2 shadow book | 2026-08-06 | Can catalyst momentum fill the earnings off-season? |
+| 2 | News-v2 shadow book | 2026-08-06 | Can catalyst momentum fill the earnings off-season? PRE-REGISTERED 2026-09-29 (at 12 closed, 2W/10L, -$927): verdict on the FIRST 25 closes — bin if avg alpha < 0 or total P&L < 0; otherwise a promotion discussion only if both hold with each one's best trade removed. Computed in code (`shadow-status` v2.preregistered_verdict); criteria closed to revision. |
 | 3 | Forecast ledger (deep/quick tiers) | 2026-08-06 | Can the brain out-predict a coin on prints? Does research depth pay? |
 | 4 | Exit counterfactuals | 2026-08-06 | Are our exit rules (2R/15d) leaving money on the table? |
 | 5 | Skip ledger | 2026-08-06 | Does LLM judgment beat the raw scanner? |

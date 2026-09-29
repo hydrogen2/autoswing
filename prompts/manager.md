@@ -66,7 +66,15 @@ and the whole day's report was lost. Therefore:
    -$570 naked short 07-14, -$157 MMM friendly-fire 07-21, -$178 AEIS stop
    geometry 08-05, plus any new incident you classify); (b) v2 shadow —
    open virtual positions and ledger stats from state/shadow/ (positions
-   .json + ledger.jsonl); (c) forecast experiment — read state/forecast/
+   .json + ledger.jsonl), PLUS the pre-registered verdict: quote
+   `shadow-status` -> v2.preregistered_verdict (verdict, sample_n/25,
+   total_pnl, avg_alpha_pct) as-is. The criteria were proposed by you
+   09-25 and approved by the owner 09-29; they are CLOSED to revision.
+   Never propose a different n, a different sample window, or softer
+   thresholds, and never read "pending" progress as a result. When it
+   flips from pending, report the verdict under DECISIONS NEEDED the
+   same day — the owner acts on it, the rule has already decided it;
+   (c) forecast experiment — read state/forecast/
    (forecasts.jsonl + scores.jsonl) and report n scored, hit rates and
    calibration BY TIER (deep vs quick); flag when a tier crosses n>=30
    with a hit rate outside 45-55% — that is signal either direction.
