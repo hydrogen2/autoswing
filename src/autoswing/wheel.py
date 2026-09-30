@@ -288,7 +288,8 @@ def advance(cycle: dict, event: str, on: str, price: float | None = None,
 
 
 def cycle_pnl(cycle: dict, mark: float | None = None,
-              option_mark: float | None = None) -> dict:
+              option_mark: float | None = None,
+              as_of: date | None = None) -> dict:
     """P&L for a cycle, and the only comparison that matters beside it:
     the same collateral put into the stock at spot_at_open.
 
@@ -331,11 +332,13 @@ def cycle_pnl(cycle: dict, mark: float | None = None,
     hold_shares = collateral / spot0 if spot0 else 0.0
     hold_pnl = round(hold_shares * (exit_ref - spot0), 2)
     # And the risk-free alternative, since the collateral is parked either way.
+    # Open cycles accrue to as_of (today by default); a live cycle parked at
+    # days=0 also zeroes cash_pnl, flattering vs_cash on every open mark.
     days = 0
+    end = cycle.get("closed") or (as_of or date.today()).isoformat()
     try:
-        if cycle.get("closed"):
-            days = (date.fromisoformat(cycle["closed"])
-                    - date.fromisoformat(cycle["opened"])).days
+        days = max(0, (date.fromisoformat(end)
+                       - date.fromisoformat(cycle["opened"])).days)
     except ValueError:
         days = 0
     cash_pnl = round(collateral * RISK_FREE * days / 365.0, 2)
@@ -354,7 +357,8 @@ def cycle_pnl(cycle: dict, mark: float | None = None,
 
 
 def score_book(cycles: list[dict], marks: dict | None = None,
-               option_marks: dict | None = None) -> dict:
+               option_marks: dict | None = None,
+               as_of: date | None = None) -> dict:
     """Scoreboard. Reports vs_hold first and premium last, deliberately.
 
     option_marks is keyed by cycle id, since two cycles on one symbol can
@@ -363,7 +367,8 @@ def score_book(cycles: list[dict], marks: dict | None = None,
     option_marks = option_marks or {}
     scored, pending = [], 0
     for c in cycles:
-        r = cycle_pnl(c, marks.get(c["symbol"]), option_marks.get(c["id"]))
+        r = cycle_pnl(c, marks.get(c["symbol"]), option_marks.get(c["id"]),
+                      as_of=as_of)
         if r.get("pending"):
             pending += 1
         else:

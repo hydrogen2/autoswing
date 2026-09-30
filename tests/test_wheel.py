@@ -247,6 +247,21 @@ def test_open_cycle_needs_a_mark():
     assert cycle_pnl(c, mark=40.0)["stock_pnl_usd"] == pytest.approx(-500.0)
 
 
+def test_open_cycle_days_held_accrues_to_as_of():
+    """Regression 2026-09-30: a live cycle rendered days_held=0 forever (it
+    only counted on close), which also zeroed cash_pnl and flattered vs_cash
+    on every open mark."""
+    from datetime import date
+    c = base_cycle()  # opened 2026-09-24, csp_open
+    r = cycle_pnl(c, mark=48.0, option_mark=0.90, as_of=date(2026, 9, 30))
+    assert r["days_held"] == 6
+    assert r["cash_pnl_usd"] > 0
+    # Closed cycles still count open->close, not open->as_of.
+    closed = advance(base_cycle(), "expire_worthless", "2026-10-16", price=47.0)
+    r2 = cycle_pnl(closed, as_of=date(2026, 12, 31))
+    assert r2["days_held"] == 22
+
+
 def test_called_away_counts_stock_gain_to_the_call_strike():
     c = advance(base_cycle(), "assign", "2026-10-16")
     c = advance(c, "sell_call", "2026-10-19", premium=0.80, strike=46.0,
