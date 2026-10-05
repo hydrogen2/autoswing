@@ -102,3 +102,33 @@ Takeaways:
 No live parameter changes from this sweep: in-sample selection off 18
 variants is exactly how strategies get overfit. The move-floor hypothesis
 (#3) goes to the wide ledger for forward validation.
+
+## Completed-session entry filter — out-of-sample check (run 2026-10-05)
+
+Command: `autoswing backtest-confirm --start 2023-01-01 --end 2025-12-31`.
+Bar pre-registered in caa9d27 before the confirm variant was run. Same data,
+same fill model; the skeleton row reproduces the headline table exactly.
+
+| variant | n | hit rate | avg R | total R | t | 2023 | 2024 | 2025 |
+|---------|------|----------|--------|---------|------|-------|--------|-------|
+| skeleton (enter after D+1, ≤3% pullback) | 1612 | 42.5% | +0.055 | +87.9 | 1.76 | −52.1 | +100.5 | +39.5 |
+| **confirm** (session after reaction closes ≥ reaction close, enter next open) | 689 | 48.9% | +0.158 | +108.8 | 3.52 | +9.1 | +77.1 | +22.7 |
+| delay (one more session after the reaction, old ≤3% tolerance) — *descriptive only* | 1342 | 44.9% | +0.120 | +161.3 | 3.54 | +6.3 | +137.1 | +17.9 |
+
+**Verdict: `better_per_trade_only`.** Confirm nearly triples avg R and edges
+total R overall (+21R), but makes LESS in total in 2024 and 2025 — its whole
+total-R advantage is avoiding 2023's chop, and it takes 57% fewer trades.
+The bar required higher total R in at least 2 of 3 years. Not a case for a
+hard entry rule as specified; the live replay's thin pass (n=33) does not
+replicate at the "makes more money in total, robustly" level.
+
+**Unregistered observation, flagged as a hypothesis and nothing more:** the
+delay variant did best on total R while keeping 83% of the trades. Delay and
+skeleton are identical for reactions on the report day; they differ only for
+reactions on the day AFTER the report (after-close reporters), where the
+skeleton buys the next open with no completed session behind it. Waiting one
+session there, with the existing 3% tolerance, removed or re-timed ~270
+trades that were strongly net negative. This was not the pre-registered
+variant and these years have now been looked at for it, so it cannot be
+claimed from this data. It needs its own pre-registered test on years or
+trades it has not seen.
