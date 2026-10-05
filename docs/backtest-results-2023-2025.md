@@ -132,3 +132,28 @@ trades that were strongly net negative. This was not the pre-registered
 variant and these years have now been looked at for it, so it cannot be
 claimed from this data. It needs its own pre-registered test on years or
 trades it has not seen.
+
+## Delay variant on unseen 2021–22 (run 2026-10-05)
+
+Command: `autoswing backtest-confirm --start 2021-01-01 --end 2022-12-31
+--registered delay`. Bar pre-registered in 530df7c, when 2021–22 had never
+been fetched or run.
+
+| variant | n | hit rate | avg R | total R | t | 2021H1 | 2021H2 | 2022H1 | 2022H2 |
+|---------|-----|----------|--------|---------|------|--------|--------|--------|--------|
+| skeleton | 690 | 41.6% | +0.079 | +54.2 | 1.62 | +16.8 | −5.3 | −46.7 | +89.3 |
+| **delay** | 553 | 40.3% | +0.022 | +12.4 | 0.43 | +19.0 | −11.7 | −39.4 | +44.6 |
+| confirm — *descriptive only* | 281 | 41.6% | +0.019 | +5.4 | 0.29 | | | | |
+
+**Verdict: `no_support`.** On years it had not seen, delay is WORSE than the
+skeleton on avg R and on total R, and ahead in only 2 of 4 half-years. The
+strict confirm rule fares no better here: even its "better per trade" result
+from 2023–25 does not replicate.
+
+**Conclusion for the whole line of inquiry.** The completed-session idea
+looked good on 33 live trades, half-good on 2023–25, and bad on 2021–22. The
++161R the delay variant showed on 2023–25 was a pattern found by looking,
+and it reversed on fresh data — which is what the pre-registration was for.
+Neither variant becomes a hard rule. The lesson stays playbook judgment,
+where the brain can weigh it against the specific print. Closed; do not
+re-propose either variant without a new hypothesis and new data.
