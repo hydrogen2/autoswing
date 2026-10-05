@@ -11,6 +11,7 @@
       "Bash(uv run autoswing fill-quality:*)",
       "Bash(uv run autoswing wheel-score:*)",
       "Bash(uv run autoswing tone-outcomes:*)",
+      "Bash(uv run autoswing entry-counterfactual:*)",
       "Bash(uv run autoswing shadow-status:*)",
       "Bash(uv run autoswing scan-upcoming:*)",
       "Bash(uv run pytest:*)",

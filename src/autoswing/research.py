@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 from .manage import trading_days_between
@@ -639,3 +639,224 @@ def replay_stop_geometry_skips(skips: list[dict], history: dict,
             1 for r in results if r["basis"] == "unreliable_reconstruction"),
         "results": results,
     }
+
+
+# -- completed-session entry counterfactual --------------------------------------
+# Proposed by the manager 2026-10-02, approved by the owner 2026-10-05 with two
+# conditions (report with and without the trades that generated the idea; fix
+# the pass bar before running). Everything below was committed BEFORE the
+# replay first touched real trades, so none of it could be shaped by the
+# result.
+#
+# The question: KMX (09-29) was bought on the reaction day itself, mid-session,
+# and faded. The lesson the brain took -- wait for one completed session that
+# holds the gains -- currently lives in the playbook as judgment. Should it be
+# a hard rule?
+#
+# THE RULE, mechanically (daily bars only, applied uniformly to every trade):
+#   - D   = reaction day (reconstructed the way the scanner does it).
+#   - D+1 = confirmation session: it must CLOSE at or above D's close.
+#   - Entry at the OPEN of D+2, same stop PRICE the live trade used (the stop
+#     is set by the chart, not by the entry), target 2R from the new entry.
+#   - No trade if D+1 fails to confirm, if the D+2 open is at or below the stop
+#     (the setup already broke), or if the stop would sit more than 12% away
+#     (the playbook's existing hard ceiling).
+#
+# SIZING: each replayed trade risks the SAME DOLLARS the live trade risked, so
+# replay dollars = replay R x live dollar risk. Matching share count instead
+# would resize every trade whose entry moved, and on a book that is net
+# negative, quietly shrinking positions flatters whichever side shrank.
+#
+# PRE-REGISTERED PASS BAR (house standard, same shape as drift-exhaustion):
+#   the verdict sample EXCLUDES the hypothesis-generating trades (KMX, SNPS) --
+#   a rule learned from two trades is guaranteed to look good on those two.
+#   On that sample the rule makes a case for becoming a hard rule only if
+#     (1) total replay dollars  > total live dollars, AND
+#     (2) total replay R        > total live R, AND
+#     (3) the dollar gain is still > 0 after removing the single trade that
+#         contributes most to it.
+#   Anything less is "no_case": the lesson stays judgment. Fewer than 20
+#   scorable trades in the sample is "insufficient_sample", not a near miss.
+#   A pass is a case for the OWNER to consider, never an automatic change.
+ENTRY_CF_REGISTERED = "2026-10-05"
+ENTRY_CF_EXCLUDE = ("KMX", "SNPS")
+ENTRY_CF_MAX_STOP_PCT = 12.0
+ENTRY_CF_MIN_N = 20
+ENTRY_CF_BASELINE = {"name": "baseline (2R target, 15d)",
+                     "target_r": 2.0, "timebox_days": 15}
+ENTRY_CF_RULE = ("confirm: session after the reaction day closes >= reaction-"
+                 "day close; enter next open, live stop price, 2R target; no "
+                 "trade if unconfirmed, open <= stop, or stop > 12% away")
+ENTRY_CF_PASS_BAR = ("ex-KMX/SNPS: replay beats live on total dollars AND "
+                     "total R, and the dollar gain survives dropping the most "
+                     "helpful trade; n >= 20 scorable")
+
+
+def find_report(symbol: str, entry_date: date, reports_for_day,
+                lookback_days: int = 10):
+    """The earnings report a trade was reacting to: the most recent calendar
+    row for the symbol on or before the entry date. reports_for_day is
+    injected (date -> list[Report]) so this stays testable offline."""
+    for back in range(lookback_days + 1):
+        day = entry_date - timedelta(days=back)
+        for rep in reports_for_day(day):
+            if rep.symbol.upper() == symbol.upper():
+                return rep
+    return None
+
+
+def completed_session_entry(trade: LiveTrade, df, reaction_date: date) -> dict:
+    """Apply the mechanical rule to one trade. Returns the would-be entry, a
+    skip with its reason, or 'unscorable' when the bars cannot answer -- and
+    unscorable is always reported, never folded into a skip."""
+    dates = [ts.date() for ts in df.index]
+    if reaction_date not in dates:
+        return {"status": "unscorable", "why": "reaction day not in price data"}
+    r = dates.index(reaction_date)
+    if r + 1 >= len(dates):
+        return {"status": "unscorable", "why": "confirmation session not traded yet"}
+    reaction_close = float(df["Close"].iloc[r])
+    confirm_close = float(df["Close"].iloc[r + 1])
+    base = {"reaction_close": round(reaction_close, 4),
+            "confirm_date": dates[r + 1].isoformat(),
+            "confirm_close": round(confirm_close, 4)}
+    if confirm_close < reaction_close:
+        return {**base, "status": "skipped", "why": "no_confirmation"}
+    if r + 2 >= len(dates):
+        return {**base, "status": "unscorable", "why": "entry session not traded yet"}
+    entry = float(df["Open"].iloc[r + 2])
+    base.update(cf_entry_date=dates[r + 2].isoformat(), cf_entry=round(entry, 4))
+    if entry <= trade.stop:
+        return {**base, "status": "skipped", "why": "setup_broke"}
+    stop_pct = 100 * (entry - trade.stop) / entry
+    base["cf_stop_pct"] = round(stop_pct, 2)
+    if stop_pct > ENTRY_CF_MAX_STOP_PCT:
+        return {**base, "status": "skipped", "why": "stop_too_wide"}
+    cf = LiveTrade(symbol=trade.symbol, entry_date=dates[r + 2].isoformat(),
+                   entry=entry, stop=trade.stop,
+                   target=entry + 2 * (entry - trade.stop), quantity=1)
+    return {**base, "status": "entered", "why": "confirmed", "cf_trade": cf}
+
+
+def _entry_cf_row(trade: LiveTrade, df, reaction: dict, today) -> dict:
+    live = simulate_exit(trade, df, ENTRY_CF_BASELINE, today=today)
+    risk_usd = round((trade.entry - trade.stop) * trade.quantity, 2)
+    row = {
+        "symbol": trade.symbol, "entry_date": trade.entry_date,
+        "reaction_date": reaction["reaction_date"],
+        "ambiguous_reaction_day": reaction.get("ambiguous", False),
+        "live_risk_usd": risk_usd,
+        "live_r": live["r_multiple"], "live_pnl": live["pnl"],
+        "live_reason": live["reason"],
+        # A live entry happens mid-session, but the daily bar's low may predate
+        # it. Counted so the reader can see whether this convention matters.
+        "live_entry_day_stop": (live["reason"] == "stop"
+                                and live["exit_date"] == trade.entry_date),
+    }
+    rd = date.fromisoformat(reaction["reaction_date"])
+    if rd > date.fromisoformat(trade.entry_date):
+        row.update(cf_status="unscorable", cf_why="reaction day after live entry")
+        return row
+    row["live_entry_day"] = trading_days_between(
+        rd, date.fromisoformat(trade.entry_date))
+    cf = completed_session_entry(trade, df, rd)
+    row.update({k: v for k, v in cf.items() if k not in ("cf_trade", "status", "why")})
+    row.update(cf_status=cf["status"], cf_why=cf["why"])
+    if cf["status"] == "entered":
+        res = simulate_exit(cf["cf_trade"], df, ENTRY_CF_BASELINE, today=today)
+        row.update(cf_r=res["r_multiple"], cf_reason=res["reason"],
+                   cf_exit_date=res["exit_date"],
+                   cf_pnl=round(res["r_multiple"] * risk_usd, 2))
+    elif cf["status"] == "skipped":
+        row.update(cf_r=0.0, cf_pnl=0.0, cf_reason="no_trade")
+    if row.get("cf_pnl") is not None:
+        row["delta_pnl"] = round(row["cf_pnl"] - row["live_pnl"], 2)
+    return row
+
+
+def _entry_cf_totals(rows: list[dict]) -> dict:
+    skips: dict[str, int] = {}
+    for r in rows:
+        if r["cf_status"] == "skipped":
+            skips[r["cf_why"]] = skips.get(r["cf_why"], 0) + 1
+    return {
+        "n": len(rows),
+        "live_total_pnl": round(sum(r["live_pnl"] for r in rows), 2),
+        "cf_total_pnl": round(sum(r["cf_pnl"] for r in rows), 2),
+        "live_total_r": round(sum(r["live_r"] or 0 for r in rows), 2),
+        "cf_total_r": round(sum(r["cf_r"] or 0 for r in rows), 2),
+        "live_wins": sum(1 for r in rows if r["live_pnl"] > 0),
+        "cf_wins": sum(1 for r in rows if r["cf_pnl"] > 0),
+        "cf_entered": sum(1 for r in rows if r["cf_status"] == "entered"),
+        "cf_skipped": dict(sorted(skips.items())),
+        "open_marks": sum(1 for r in rows if "still_open" in
+                          (r["live_reason"], r.get("cf_reason"))),
+    }
+
+
+def entry_cf_verdict(rows: list[dict]) -> dict:
+    """The pre-registered verdict over already-built rows."""
+    scorable = [r for r in rows if r["cf_status"] != "unscorable"]
+    sample = [r for r in scorable if r["symbol"] not in ENTRY_CF_EXCLUDE]
+    out = {
+        "rule": ENTRY_CF_RULE, "pass_bar": ENTRY_CF_PASS_BAR,
+        "registered": ENTRY_CF_REGISTERED,
+        "excluded_from_verdict": [r["symbol"] for r in scorable
+                                  if r["symbol"] in ENTRY_CF_EXCLUDE],
+        "unscorable": [{"symbol": r["symbol"], "entry_date": r["entry_date"],
+                        "why": r["cf_why"]} for r in rows
+                       if r["cf_status"] == "unscorable"],
+        "verdict_sample": _entry_cf_totals(sample),
+        "all_scorable": _entry_cf_totals(scorable),
+    }
+    s = out["verdict_sample"]
+    if s["n"] < ENTRY_CF_MIN_N:
+        out.update(verdict="insufficient_sample",
+                   reasons=[f"{s['n']} scorable trades < {ENTRY_CF_MIN_N}"])
+        return out
+    gain = round(s["cf_total_pnl"] - s["live_total_pnl"], 2)
+    best = max(sample, key=lambda r: r["delta_pnl"])
+    gain_ex_best = round(gain - best["delta_pnl"], 2)
+    out.update(dollar_gain=gain, dollar_gain_ex_best=gain_ex_best,
+               most_helpful_trade={"symbol": best["symbol"],
+                                   "entry_date": best["entry_date"],
+                                   "delta_pnl": best["delta_pnl"]})
+    reasons = []
+    if gain <= 0:
+        reasons.append(f"dollars: replay {s['cf_total_pnl']} vs live "
+                       f"{s['live_total_pnl']} (no gain)")
+    if s["cf_total_r"] <= s["live_total_r"]:
+        reasons.append(f"R: replay {s['cf_total_r']} vs live {s['live_total_r']} "
+                       "(no gain)")
+    if gain > 0 and gain_ex_best <= 0:
+        reasons.append(f"dollar gain {gain} rests on one trade "
+                       f"({best['symbol']}): {gain_ex_best} without it")
+    if reasons:
+        out.update(verdict="no_case", reasons=reasons)
+    else:
+        out.update(verdict="case_for_hard_rule",
+                   reasons=["beats live on dollars and R; gain survives "
+                            "dropping the most helpful trade"])
+    return out
+
+
+def compare_entry_rule(trades: list[LiveTrade], history: dict,
+                       reactions: dict, today: date | None = None) -> dict:
+    """reactions: "SYMBOL-entry_date" -> {"reaction_date", "ambiguous"} or
+    {"unresolved": why}. A trade whose reaction day could not be
+    reconstructed is listed as unscorable, never silently dropped."""
+    rows = []
+    for t in trades:
+        key = f"{t.symbol}-{t.entry_date}"
+        df = history.get(t.symbol)
+        rx = reactions.get(key) or {"unresolved": "no reaction lookup"}
+        if df is None or "unresolved" in rx:
+            rows.append({"symbol": t.symbol, "entry_date": t.entry_date,
+                         "cf_status": "unscorable",
+                         "cf_why": "no price data" if df is None
+                         else rx["unresolved"]})
+            continue
+        rows.append(_entry_cf_row(t, df, rx, today))
+    out = entry_cf_verdict(rows)
+    out["rows"] = rows
+    return out

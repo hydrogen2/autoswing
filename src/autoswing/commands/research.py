@@ -78,6 +78,8 @@ def _dispatch_data(config, journal: Journal, args):
             for name, stats in comparison.items()
         })
         return comparison
+    if args.command == "entry-counterfactual":
+        return _entry_counterfactual(journal)
     if args.command == "fill-quality":
         from ..config import PROJECT_ROOT
         from ..research import fill_quality
@@ -1113,4 +1115,73 @@ def _wheel_score(journal: Journal):
                    n_closed=result["n_closed"],
                    vs_hold_usd=result.get("vs_hold_usd"),
                    verdict=result.get("verdict"))
+    return result
+
+
+# -- completed-session entry counterfactual ------------------------------------
+
+def _entry_counterfactual(journal: Journal):
+    """Replay live trades under the mechanical completed-session rule.
+
+    Each trade's reaction day is reconstructed the way the scanner found it:
+    the Nasdaq calendar row on or before the entry, then reaction_metrics.
+    A calendar FETCH FAILURE is kept distinct from "no report in the
+    calendar" -- the first is our problem, the second is a fact about the
+    trade, and only one of them should ever read as a quiet result."""
+    from datetime import date, timedelta
+
+    from ..backtest import cached_calendar_day
+    from ..calendar import is_trading_day
+    from ..config import PROJECT_ROOT
+    from ..data.prices import fetch_history, reaction_metrics
+    from ..research import compare_entry_rule, extract_live_trades, find_report
+
+    trades = extract_live_trades(PROJECT_ROOT / "journal")
+    history = fetch_history(sorted({t.symbol for t in trades}), period="6mo")
+    cache = PROJECT_ROOT / "state" / "backtest" / "calendar"
+    memo: dict = {}
+    failed: set = set()
+
+    def reports_for_day(day):
+        if day not in memo:
+            if not is_trading_day(day):
+                memo[day] = []
+            else:
+                try:
+                    memo[day] = cached_calendar_day(day, cache)
+                except Exception:
+                    failed.add(day)
+                    memo[day] = []
+        return memo[day]
+
+    reactions = {}
+    for t in trades:
+        key = f"{t.symbol}-{t.entry_date}"
+        df = history.get(t.symbol)
+        if df is None:
+            continue
+        entry_d = date.fromisoformat(t.entry_date)
+        rep = find_report(t.symbol, entry_d, reports_for_day)
+        if rep is None:
+            lookback = {entry_d - timedelta(days=i) for i in range(11)}
+            reactions[key] = {"unresolved": (
+                "calendar fetch failed in the lookback" if lookback & failed
+                else "no earnings report in the 10 days before entry")}
+            continue
+        rx = reaction_metrics(t.symbol, df, date.fromisoformat(rep.report_date),
+                              rep.timing)
+        if rx is None:
+            reactions[key] = {"unresolved": "reaction day not computable"}
+            continue
+        reactions[key] = {"reaction_date": rx.reaction_date,
+                          "ambiguous": rx.alt_day_date is not None,
+                          "report_date": rep.report_date, "timing": rep.timing}
+
+    result = compare_entry_rule(trades, history, reactions)
+    result["calendar_days_failed"] = sorted(d.isoformat() for d in failed)
+    journal.record("research.entry_counterfactual",
+                   verdict=result["verdict"], reasons=result.get("reasons"),
+                   verdict_sample=result["verdict_sample"],
+                   all_scorable=result["all_scorable"],
+                   unscorable=len(result["unscorable"]))
     return result

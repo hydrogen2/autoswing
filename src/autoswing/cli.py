@@ -25,6 +25,7 @@ DATA_COMMANDS = (
     "tone-log", "tone-outcomes",
     "wheel-screen", "wheel-log", "wheel-advance", "wheel-score",
     "wheel-expire", "wheel-cover",
+    "entry-counterfactual",
 )
 
 
@@ -328,6 +329,14 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     sub.add_parser(
+        "entry-counterfactual",
+        help="replay the live PEAD trades under the mechanical completed-"
+        "session entry rule (confirm on D+1 close, enter D+2 open) and "
+        "return the PRE-REGISTERED verdict, with and without the trades "
+        "that generated the idea. Read-only.",
+    )
+
+    sub.add_parser(
         "lesson-pending",
         help="reflection memory: closed trades with no lesson yet, with "
         "realized R / return / alpha vs benchmark (preclose task)",
@@ -390,7 +399,8 @@ def _arm_watchdog(journal: Journal, command: str) -> None:
     # wall, and neither exception touches the broker.
     if command == "backtest":
         default = "3600"
-    elif command in ("wheel-screen", "wheel-cover", "wheel-score"):
+    elif command in ("wheel-screen", "wheel-cover", "wheel-score",
+                     "entry-counterfactual"):
         default = "900"
     else:
         default = "180"
