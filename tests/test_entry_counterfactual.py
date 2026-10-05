@@ -189,3 +189,80 @@ def test_find_report_takes_the_most_recent_on_or_before_entry():
 def test_find_report_returns_none_outside_the_lookback():
     cal = {date(2026, 7, 1): [SimpleNamespace(symbol="T", report_date="2026-07-01")]}
     assert find_report("T", date(2026, 8, 10), lambda d: cal.get(d, [])) is None
+
+
+# --- reaction-day resolution (added after the first replay) ----------------------
+
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+from autoswing.calendar import is_trading_day
+from autoswing.research import resolve_reaction_day
+
+ET = ZoneInfo("America/New_York")
+
+
+def stamp(y, m, d, hh, mm=0):
+    return datetime(y, m, d, hh, mm, tzinfo=ET)
+
+
+def test_premarket_stamp_reacts_the_same_day():
+    r = resolve_reaction_day(date(2026, 9, 15), [stamp(2026, 9, 15, 6)], None,
+                             is_trading_day)
+    assert r["reaction_date"] == "2026-09-15" and r["source"] == "stamped"
+
+
+def test_after_close_stamp_reacts_the_next_session():
+    r = resolve_reaction_day(date(2026, 9, 10), [stamp(2026, 9, 9, 16)], None,
+                             is_trading_day)
+    assert r["reaction_date"] == "2026-09-10"
+
+
+def test_friday_after_close_reacts_on_monday():
+    r = resolve_reaction_day(date(2026, 9, 14), [stamp(2026, 9, 11, 16, 5)], None,
+                             is_trading_day)
+    assert r["reaction_date"] == "2026-09-14"
+
+
+def test_stamp_beats_a_disagreeing_heuristic():
+    """FPS 09-15: the heuristic picked 09-16, the day AFTER the live entry."""
+    r = resolve_reaction_day(
+        date(2026, 9, 15), [stamp(2026, 9, 15, 6)],
+        {"reaction_date": "2026-09-16", "alt_day_date": "2026-09-15"},
+        is_trading_day)
+    assert r["reaction_date"] == "2026-09-15" and r["source"] == "stamped"
+
+
+def test_heuristic_after_entry_falls_back_to_its_runner_up():
+    r = resolve_reaction_day(
+        date(2026, 9, 15), [],
+        {"reaction_date": "2026-09-16", "alt_day_date": "2026-09-15"},
+        is_trading_day)
+    assert r["reaction_date"] == "2026-09-15" and r["source"] == "heuristic_alt"
+    assert r["ambiguous"] is True
+
+
+def test_nothing_consistent_is_unresolved_never_forced():
+    r = resolve_reaction_day(
+        date(2026, 9, 15), [stamp(2026, 9, 15, 16)],      # reacts 09-16 > entry
+        {"reaction_date": "2026-09-16", "alt_day_date": None}, is_trading_day)
+    assert "unresolved" in r
+
+
+def test_old_stamps_outside_the_lookback_are_ignored():
+    r = resolve_reaction_day(date(2026, 9, 15), [stamp(2026, 6, 15, 6)], None,
+                             is_trading_day)
+    assert "unresolved" in r
+
+
+def test_two_live_entries_on_one_reaction_are_one_replayed_trade():
+    """MMM 07-21 + 07-22: scoring both credited the rule with one win twice."""
+    first = trade(entry_date="2026-08-10")
+    again = trade(entry_date="2026-08-11", entry=101.0)
+    rx = {"reaction_date": "2026-08-10"}
+    out = compare_entry_rule([again, first], {"T": make_df(CONFIRMED)},
+                             {"T-2026-08-10": rx, "T-2026-08-11": rx})
+    assert out["all_scorable"]["n"] == 1
+    assert out["duplicate_events"][0]["entry_date"] == "2026-08-11"
+    kept = [r for r in out["rows"] if r["cf_status"] == "entered"]
+    assert len(kept) == 1 and kept[0]["entry_date"] == "2026-08-10"

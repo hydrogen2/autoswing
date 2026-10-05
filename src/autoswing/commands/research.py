@@ -1154,6 +1154,21 @@ def _entry_counterfactual(journal: Journal):
                     memo[day] = []
         return memo[day]
 
+    from ..data.earnings import earnings_stamps
+    from ..research import resolve_reaction_day
+
+    stamp_memo: dict = {}
+    stamp_failed: set = set()
+
+    def stamps_for(symbol):
+        if symbol not in stamp_memo:
+            try:
+                stamp_memo[symbol] = earnings_stamps(symbol)
+            except Exception:
+                stamp_failed.add(symbol)
+                stamp_memo[symbol] = []
+        return stamp_memo[symbol]
+
     reactions = {}
     for t in trades:
         key = f"{t.symbol}-{t.entry_date}"
@@ -1161,24 +1176,33 @@ def _entry_counterfactual(journal: Journal):
         if df is None:
             continue
         entry_d = date.fromisoformat(t.entry_date)
+        # Calendar heuristic is computed as the fallback, and only trusted
+        # where the timestamped route has nothing to say.
+        heuristic = None
         rep = find_report(t.symbol, entry_d, reports_for_day)
-        if rep is None:
+        if rep is not None:
+            rx = reaction_metrics(t.symbol, df,
+                                  date.fromisoformat(rep.report_date), rep.timing)
+            if rx is not None:
+                heuristic = {"reaction_date": rx.reaction_date,
+                             "alt_day_date": rx.alt_day_date}
+        resolved = resolve_reaction_day(entry_d, stamps_for(t.symbol),
+                                        heuristic, is_trading_day)
+        if "unresolved" in resolved:
             lookback = {entry_d - timedelta(days=i) for i in range(11)}
-            reactions[key] = {"unresolved": (
-                "calendar fetch failed in the lookback" if lookback & failed
-                else "no earnings report in the 10 days before entry")}
-            continue
-        rx = reaction_metrics(t.symbol, df, date.fromisoformat(rep.report_date),
-                              rep.timing)
-        if rx is None:
-            reactions[key] = {"unresolved": "reaction day not computable"}
-            continue
-        reactions[key] = {"reaction_date": rx.reaction_date,
-                          "ambiguous": rx.alt_day_date is not None,
-                          "report_date": rep.report_date, "timing": rep.timing}
+            if t.symbol in stamp_failed or lookback & failed:
+                resolved = {"unresolved": "a timing source failed to fetch: "
+                            + resolved["unresolved"]}
+        reactions[key] = resolved
 
     result = compare_entry_rule(trades, history, reactions)
     result["calendar_days_failed"] = sorted(d.isoformat() for d in failed)
+    result["stamp_fetch_failed"] = sorted(stamp_failed)
+    sources: dict = {}
+    for rx in reactions.values():
+        k = rx.get("source", "unresolved")
+        sources[k] = sources.get(k, 0) + 1
+    result["reaction_sources"] = sources
     journal.record("research.entry_counterfactual",
                    verdict=result["verdict"], reasons=result.get("reasons"),
                    verdict_sample=result["verdict_sample"],

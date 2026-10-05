@@ -329,3 +329,18 @@ def resolve_next_earnings(known: list[date], stamped: list[datetime],
     if past and (today - max(past)).days <= 30:
         return "none"  # just reported; next report is a quarter away
     return "unknown"
+
+
+def earnings_stamps(symbol: str, limit: int = 12) -> list[datetime]:
+    """Past and upcoming report datetimes (ET) that carry a time of day.
+    Unstamped rows are dropped: a date without a time cannot say whether the
+    print landed before or after the session."""
+    import yfinance as yf
+
+    out: list[datetime] = []
+    df = yf.Ticker(symbol).get_earnings_dates(limit=limit)
+    if df is not None:
+        for ts in df.index:
+            if getattr(ts, "tzinfo", None) is not None:
+                out.append(ts.to_pydatetime().astimezone(ET))
+    return out

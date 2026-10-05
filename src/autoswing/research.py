@@ -201,8 +201,21 @@ def extract_live_trades(journal_dir: Path) -> list[LiveTrade]:
 
 
 def simulate_exit(trade: LiveTrade, df, rule: dict,
-                  today: date | None = None) -> dict:
+                  today: date | None = None,
+                  entry_at_open: bool = False) -> dict:
     """Replay one trade under an exit rule against daily bars.
+
+    ENTRY DAY (fixed 2026-10-05): a live entry happens mid-session, so that
+    day's high and low include prices from BEFORE the entry existed. Testing
+    them against the bracket invented stop-outs that never happened: ASO
+    (09-09) and FPS (09-15) both replayed as -1R entry-day stops while the
+    real trades hit their targets (+$499, +$815). Those two false stops
+    understated every exit-counterfactual baseline by about $1,900. The shadow
+    books got this fix on 09-09 (be851b0); this simulator did not. Same
+    convention now: on the entry day only the CLOSE is provably post-entry,
+    so a level fills there only if the close is at or through it.
+    entry_at_open=True (a replayed entry AT the open) keeps full-bar checks,
+    because then the whole bar really is post-entry.
 
     rule: {name, target_r (None = no target), timebox_days,
            trail_r (None = fixed stop; else trailing distance in R),
@@ -230,10 +243,16 @@ def simulate_exit(trade: LiveTrade, df, rule: dict,
         # updates from this bar's close only for the NEXT bar. Updating
         # first would test an end-of-day stop against the same day's low —
         # look-ahead (caught by test_trailing_stop_locks_in_gains).
-        if float(bar["Low"]) <= stop:
-            return _cf_result(trade, d, stop, "stop")
-        if target and float(bar["High"]) >= target:
-            return _cf_result(trade, d, target, "target")
+        if d == entry_d and not entry_at_open:
+            if last_close <= stop:
+                return _cf_result(trade, d, stop, "stop")
+            if target and last_close >= target:
+                return _cf_result(trade, d, target, "target")
+        else:
+            if float(bar["Low"]) <= stop:
+                return _cf_result(trade, d, stop, "stop")
+            if target and float(bar["High"]) >= target:
+                return _cf_result(trade, d, target, "target")
         held = trading_days_between(entry_d, d)
         if held >= rule["timebox_days"]:
             return _cf_result(trade, d, last_close, "timebox")
@@ -705,6 +724,55 @@ def find_report(symbol: str, entry_date: date, reports_for_day,
     return None
 
 
+def resolve_reaction_day(entry_date: date, stamps: list, heuristic: dict | None,
+                         is_trading_day) -> dict:
+    """Which session was the reaction day for a trade entered on entry_date.
+
+    Added after the first replay (2026-10-05) showed the calendar-only route
+    is a guess for EVERY historical trade: Nasdaq's old day-rows no longer
+    carry bmo/amc, so reaction_metrics falls back to "whichever of D / D+1
+    moved more". That picked the day AFTER the live entry for FPS and KMX --
+    impossible, the brain cannot buy before the reaction -- and disagreed
+    with the report's own timestamp on AVAV.
+
+    Order of evidence:
+      1. A timestamped report within 10 days before the entry: before 09:30
+         ET or during the session reacts the same day, at/after 16:00 the
+         next session. Deterministic.
+      2. Otherwise the calendar heuristic, constrained by the one hard fact
+         available: the reaction cannot be after the entry. If the heuristic's
+         pick is, its runner-up day is used when that one is consistent.
+    Anything still inconsistent is unresolved, never forced.
+    """
+    def next_session(d: date) -> date:
+        d += timedelta(days=1)
+        while not is_trading_day(d):
+            d += timedelta(days=1)
+        return d
+
+    near = [ts for ts in stamps if 0 <= (entry_date - ts.date()).days <= 10]
+    if near:
+        ts = max(near)
+        after_close = (ts.hour, ts.minute) >= (16, 0)
+        rd = next_session(ts.date()) if after_close else ts.date()
+        if not is_trading_day(rd):
+            rd = next_session(rd)
+        if rd <= entry_date:
+            return {"reaction_date": rd.isoformat(), "source": "stamped",
+                    "timing": "amc" if after_close else "bmo_or_intraday",
+                    "ambiguous": False}
+    if heuristic and heuristic.get("reaction_date"):
+        if date.fromisoformat(heuristic["reaction_date"]) <= entry_date:
+            return {"reaction_date": heuristic["reaction_date"],
+                    "source": "heuristic", "ambiguous": True}
+        alt = heuristic.get("alt_day_date")
+        if alt and date.fromisoformat(alt) <= entry_date:
+            return {"reaction_date": alt, "source": "heuristic_alt",
+                    "ambiguous": True}
+        return {"unresolved": "reaction day after live entry on every source"}
+    return {"unresolved": "no timestamped report and no calendar row"}
+
+
 def completed_session_entry(trade: LiveTrade, df, reaction_date: date) -> dict:
     """Apply the mechanical rule to one trade. Returns the would-be entry, a
     skip with its reason, or 'unscorable' when the bars cannot answer -- and
@@ -745,6 +813,7 @@ def _entry_cf_row(trade: LiveTrade, df, reaction: dict, today) -> dict:
         "symbol": trade.symbol, "entry_date": trade.entry_date,
         "reaction_date": reaction["reaction_date"],
         "ambiguous_reaction_day": reaction.get("ambiguous", False),
+        "reaction_source": reaction.get("source"),
         "live_risk_usd": risk_usd,
         "live_r": live["r_multiple"], "live_pnl": live["pnl"],
         "live_reason": live["reason"],
@@ -763,7 +832,9 @@ def _entry_cf_row(trade: LiveTrade, df, reaction: dict, today) -> dict:
     row.update({k: v for k, v in cf.items() if k not in ("cf_trade", "status", "why")})
     row.update(cf_status=cf["status"], cf_why=cf["why"])
     if cf["status"] == "entered":
-        res = simulate_exit(cf["cf_trade"], df, ENTRY_CF_BASELINE, today=today)
+        # The replayed entry is AT the open, so its whole first bar counts.
+        res = simulate_exit(cf["cf_trade"], df, ENTRY_CF_BASELINE, today=today,
+                            entry_at_open=True)
         row.update(cf_r=res["r_multiple"], cf_reason=res["reason"],
                    cf_exit_date=res["exit_date"],
                    cf_pnl=round(res["r_multiple"] * risk_usd, 2))
@@ -796,7 +867,8 @@ def _entry_cf_totals(rows: list[dict]) -> dict:
 
 def entry_cf_verdict(rows: list[dict]) -> dict:
     """The pre-registered verdict over already-built rows."""
-    scorable = [r for r in rows if r["cf_status"] != "unscorable"]
+    scorable = [r for r in rows
+                if r["cf_status"] not in ("unscorable", "duplicate_event")]
     sample = [r for r in scorable if r["symbol"] not in ENTRY_CF_EXCLUDE]
     out = {
         "rule": ENTRY_CF_RULE, "pass_bar": ENTRY_CF_PASS_BAR,
@@ -806,6 +878,9 @@ def entry_cf_verdict(rows: list[dict]) -> dict:
         "unscorable": [{"symbol": r["symbol"], "entry_date": r["entry_date"],
                         "why": r["cf_why"]} for r in rows
                        if r["cf_status"] == "unscorable"],
+        "duplicate_events": [{"symbol": r["symbol"], "entry_date": r["entry_date"],
+                              "why": r["cf_why"]} for r in rows
+                             if r["cf_status"] == "duplicate_event"],
         "verdict_sample": _entry_cf_totals(sample),
         "all_scorable": _entry_cf_totals(scorable),
     }
@@ -846,10 +921,24 @@ def compare_entry_rule(trades: list[LiveTrade], history: dict,
     {"unresolved": why}. A trade whose reaction day could not be
     reconstructed is listed as unscorable, never silently dropped."""
     rows = []
-    for t in trades:
+    seen_events: dict[tuple, str] = {}
+    for t in sorted(trades, key=lambda x: x.entry_date):
         key = f"{t.symbol}-{t.entry_date}"
         df = history.get(t.symbol)
         rx = reactions.get(key) or {"unresolved": "no reaction lookup"}
+        # ONE EARNINGS EVENT IS ONE TRADE. A second live entry on the same
+        # reaction (MMM 07-21 then 07-22, a re-entry after the stale-earnings
+        # incident) maps to the SAME replayed trade; scoring both credited
+        # the rule with one win twice. The first entry is the decision; the
+        # later ones are listed and left out of every total.
+        event = (t.symbol, rx.get("reaction_date"))
+        if rx.get("reaction_date") and event in seen_events:
+            rows.append({"symbol": t.symbol, "entry_date": t.entry_date,
+                         "cf_status": "duplicate_event",
+                         "cf_why": f"same reaction as {seen_events[event]}"})
+            continue
+        if rx.get("reaction_date"):
+            seen_events[event] = key
         if df is None or "unresolved" in rx:
             rows.append({"symbol": t.symbol, "entry_date": t.entry_date,
                          "cf_status": "unscorable",

@@ -43,9 +43,35 @@ class TestSimulateExit:
         assert r["r_multiple"] == 2.0
 
     def test_stop_first_on_ambiguous_bar(self):
-        df = make_df([(100, 112, 94, 105)])
+        # Day 2 touches both levels: intraday order is unknowable, so the
+        # stop is assumed first. (Not the entry day -- see the tests below.)
+        df = make_df([(100, 103, 99, 102), (102, 112, 94, 105)])
         r = simulate_exit(trade(), df, BASELINE)
         assert r["reason"] == "stop"
+
+    def test_entry_day_intraday_touch_is_not_a_stop(self):
+        """ASO 09-09 / FPS 09-15: the day's low predated the mid-session
+        entry, the close held, and the real trades went on to hit target.
+        Replaying them as -1R entry-day stops was a false loss."""
+        df = make_df([(100, 104, 94, 103), (103, 111, 102, 109)])
+        r = simulate_exit(trade(), df, BASELINE)
+        assert r["reason"] == "target" and r["r_multiple"] == 2.0
+
+    def test_entry_day_close_through_the_stop_does_fill(self):
+        df = make_df([(100, 101, 93, 94)])
+        r = simulate_exit(trade(), df, BASELINE)
+        assert r["reason"] == "stop" and r["exit_date"] == "2026-08-10"
+
+    def test_entry_day_close_through_the_target_does_fill(self):
+        df = make_df([(100, 112, 99, 111)])
+        r = simulate_exit(trade(), df, BASELINE)
+        assert r["reason"] == "target"
+
+    def test_entry_at_open_uses_the_whole_first_bar(self):
+        """A replayed entry AT the open really does see the full bar."""
+        df = make_df([(100, 104, 94, 103), (103, 111, 102, 109)])
+        r = simulate_exit(trade(), df, BASELINE, entry_at_open=True)
+        assert r["reason"] == "stop" and r["exit_date"] == "2026-08-10"
 
     def test_trailing_stop_locks_in_gains(self):
         # Run to 108 (trail: 108-5=103), then dip to 102 -> stopped at 103.
