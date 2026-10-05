@@ -127,6 +127,68 @@ def cached_calendar_day(
     return parse_calendar_rows(rows, day)
 
 
+# -- delay variant: test on unseen years ------------------------------------------
+# The 2023-25 run was registered for "confirm"; "delay" was descriptive there
+# and happened to score best (+161.3R on n=1342 vs skeleton +87.9R on 1612).
+# That is a hypothesis generated FROM those years, so they cannot test it.
+# 2021-22 had never been run when this was committed.
+#
+# What delay changes, precisely: nothing for reactions on the report day
+# (skeleton and delay are identical there). For reactions on the day AFTER
+# the report -- after-close reporters -- the skeleton buys the next open with
+# no completed session behind it; delay waits one session and skips only if
+# that session closed more than 3% below the reaction close.
+#
+# PRE-REGISTERED BAR, delay vs skeleton on 2021-01-01..2022-12-31:
+#   supports             : avg R higher AND total R higher overall AND total R
+#                          higher in at least 3 of the 4 half-years.
+#   better_per_trade_only: avg R higher, total R not (overall or < 3 halves).
+#   no_support           : avg R not higher.
+# A pass is a case for the OWNER to consider one specific rule -- after an
+# after-close report, wait one full session past the reaction day -- and
+# says nothing about same-day (before-open) reporters, where the two
+# variants do not differ. Never an automatic change. "confirm" is re-run
+# alongside for comparison only.
+DELAY_REGISTERED = "2026-10-05"
+DELAY_BAR = ("delay vs skeleton on unseen 2021-22: avg R higher AND total R "
+             "higher overall AND total R higher in >= 3 of 4 half-years")
+
+
+def half_year_totals(trades: list[dict]) -> dict:
+    out: dict[str, float] = {}
+    for t in trades:
+        y, m = t["entry_date"][:4], int(t["entry_date"][5:7])
+        key = f"{y}H{1 if m <= 6 else 2}"
+        out[key] = out.get(key, 0.0) + t["r_multiple"]
+    return {k: round(v, 2) for k, v in sorted(out.items())}
+
+
+def delay_verdict(skeleton: dict, delay: dict) -> dict:
+    so, do = skeleton["overall"], delay["overall"]
+    sh = half_year_totals(skeleton.get("trades", []))
+    dh = half_year_totals(delay.get("trades", []))
+    halves = sorted(set(sh) | set(dh))
+    wins = [h for h in halves if dh.get(h, 0.0) > sh.get(h, 0.0)]
+    out = {"bar": DELAY_BAR, "registered": DELAY_REGISTERED,
+           "skeleton": {k: so.get(k) for k in ("n", "hit_rate", "avg_r", "total_r")},
+           "delay": {k: do.get(k) for k in ("n", "hit_rate", "avg_r", "total_r")},
+           "half_years": {h: {"skeleton": sh.get(h, 0.0), "delay": dh.get(h, 0.0)}
+                          for h in halves},
+           "half_years_total_r_higher": wins}
+    if not so.get("n") or not do.get("n"):
+        out["verdict"] = "undeterminable"
+        return out
+    need = 3 if len(halves) >= 4 else len(halves)
+    out["half_years_needed"] = need
+    if not do["avg_r"] > so["avg_r"]:
+        out["verdict"] = "no_support"
+    elif do["total_r"] > so["total_r"] and len(wins) >= need:
+        out["verdict"] = "supports"
+    else:
+        out["verdict"] = "better_per_trade_only"
+    return out
+
+
 # -- filters ------------------------------------------------------------------
 
 def calendar_prefilter(reports: list[Report], params: dict) -> list[Report]:

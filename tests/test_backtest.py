@@ -334,3 +334,49 @@ class TestConfirmVerdict:
         s = self.res(100, 0.05, 5.0, {"2023": 1, "2024": 2, "2025": 2})
         c = self.res(60, 0.04, 6.0, {"2023": 2, "2024": 2, "2025": 2})
         assert confirm_verdict(s, c)["verdict"] == "no_support"
+
+
+class TestDelayVerdict:
+    """Pre-registered 2026-10-05 for the unseen 2021-22 run."""
+
+    @staticmethod
+    def res(avg, halves):
+        trades = [{"entry_date": f"{h[:4]}-{'03' if h.endswith('H1') else '09'}-15",
+                   "r_multiple": v} for h, v in halves.items()]
+        tot = round(sum(halves.values()), 2)
+        return {"overall": {"n": 100, "hit_rate": 0.4, "avg_r": avg, "total_r": tot},
+                "trades": trades}
+
+    H = ("2021H1", "2021H2", "2022H1", "2022H2")
+
+    def test_half_year_bucketing(self):
+        from autoswing.backtest import half_year_totals
+        t = [{"entry_date": "2021-06-30", "r_multiple": 1.0},
+             {"entry_date": "2021-07-01", "r_multiple": 2.0},
+             {"entry_date": "2022-01-03", "r_multiple": -1.0}]
+        assert half_year_totals(t) == {"2021H1": 1.0, "2021H2": 2.0, "2022H1": -1.0}
+
+    def test_supports_needs_avg_total_and_three_of_four_halves(self):
+        from autoswing.backtest import delay_verdict
+        s = self.res(0.05, dict(zip(self.H, (5, -10, 3, 2))))
+        d = self.res(0.12, dict(zip(self.H, (6, -2, 4, 1))))
+        v = delay_verdict(s, d)
+        assert v["verdict"] == "supports" and len(v["half_years_total_r_higher"]) == 3
+
+    def test_two_of_four_halves_is_not_enough(self):
+        from autoswing.backtest import delay_verdict
+        s = self.res(0.05, dict(zip(self.H, (5, -10, 3, 2))))
+        d = self.res(0.12, dict(zip(self.H, (4, 9, 2, 3))))
+        assert delay_verdict(s, d)["verdict"] == "better_per_trade_only"
+
+    def test_lower_total_is_not_support_even_with_better_average(self):
+        from autoswing.backtest import delay_verdict
+        s = self.res(0.05, dict(zip(self.H, (5, 5, 5, 5))))
+        d = self.res(0.12, dict(zip(self.H, (6, 6, 6, -9))))
+        assert delay_verdict(s, d)["verdict"] == "better_per_trade_only"
+
+    def test_lower_average_is_no_support(self):
+        from autoswing.backtest import delay_verdict
+        s = self.res(0.05, dict(zip(self.H, (1, 1, 1, 1))))
+        d = self.res(0.04, dict(zip(self.H, (2, 2, 2, 2))))
+        assert delay_verdict(s, d)["verdict"] == "no_support"

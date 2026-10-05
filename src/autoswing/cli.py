@@ -337,6 +337,10 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     bc.add_argument("--start", required=True, help="YYYY-MM-DD")
     bc.add_argument("--end", required=True, help="YYYY-MM-DD")
+    bc.add_argument("--registered", choices=["confirm", "delay"],
+                    default="confirm",
+                    help="which variant's pre-registered verdict applies to "
+                    "this range (confirm: 2023-25; delay: 2021-22)")
 
     sub.add_parser(
         "entry-counterfactual",

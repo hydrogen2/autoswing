@@ -1217,7 +1217,7 @@ def _backtest_confirm(config, journal: Journal, args):
     """Skeleton vs delay vs confirm on identical cached history."""
     from datetime import date
 
-    from ..backtest import confirm_verdict, run_backtest
+    from ..backtest import confirm_verdict, delay_verdict, run_backtest
     from ..config import PROJECT_ROOT
 
     start, end = date.fromisoformat(args.start), date.fromisoformat(args.end)
@@ -1225,7 +1225,11 @@ def _backtest_confirm(config, journal: Journal, args):
     runs = {mode: run_backtest(start, end, config.risk, root,
                                {"entry_mode": mode})
             for mode in ("skeleton", "delay", "confirm")}
-    verdict = confirm_verdict(runs["skeleton"], runs["confirm"])
+    registered = getattr(args, "registered", "confirm")
+    verdict = (delay_verdict(runs["skeleton"], runs["delay"])
+               if registered == "delay"
+               else confirm_verdict(runs["skeleton"], runs["confirm"]))
+    verdict["registered_variant"] = registered
 
     def t_stat(trades):
         rs = [t["r_multiple"] for t in trades]
@@ -1239,11 +1243,14 @@ def _backtest_confirm(config, journal: Journal, args):
                       "t_stat_avg_r": t_stat(r["trades"]),
                       "skips": r["funnel"]["skips"]}
                for mode, r in runs.items()}
-    out = root / f"confirm-{args.start}-{args.end}.json"
+    out = root / f"{registered}-{args.start}-{args.end}.json"
     out.write_text(json.dumps({"verdict": verdict, "runs": runs}, indent=1))
     journal.record("research.backtest_confirm", range=[args.start, args.end],
                    verdict=verdict,
                    overall={m: s["overall"] for m, s in summary.items()})
     return {"verdict": verdict, "summary": summary,
-            "note": "delay is descriptive only and cannot change the verdict",
+            "funnel": {m: {k: v for k, v in r["funnel"].items() if k != "skips"}
+                       for m, r in runs.items()},
+            "note": f"only the '{registered}' variant is judged; the other "
+                    "variant is descriptive and cannot change the verdict",
             "results_file": str(out)}
