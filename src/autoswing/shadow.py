@@ -115,11 +115,18 @@ def mark_position(
     df,                       # OHLCV DataFrame (daily bars)
     today: date,
     max_hold_days: int,
+    entry_at_open: bool = False,
 ) -> dict | None:
     """Returns a close event dict, or None if the position stays open.
 
     Bars strictly BEFORE the open date are ignored. Stop-first on ambiguous
     bars (see module docstring).
+
+    entry_at_open=True is for a position opened AT the session open (the
+    backtest): then the whole first bar is post-entry and gets the normal
+    full-bar checks. The close-only entry-day rule exists for MID-SESSION
+    entries; applied to an open entry it would ignore real first-day
+    stop-outs and flatter the result.
     """
     opened = date.fromisoformat(pos.opened)
     for ts in df.index:
@@ -127,7 +134,7 @@ def mark_position(
         if d < opened or d > today:
             continue
         bar = df.loc[ts]
-        if d == opened:
+        if d == opened and not entry_at_open:
             # Mid-session entry: the bar's extremes can't be ordered
             # against the entry, only the close is provably post-entry
             # (see module docstring). Stop-first ordering preserved.

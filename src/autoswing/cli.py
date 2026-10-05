@@ -25,7 +25,7 @@ DATA_COMMANDS = (
     "tone-log", "tone-outcomes",
     "wheel-screen", "wheel-log", "wheel-advance", "wheel-score",
     "wheel-expire", "wheel-cover",
-    "entry-counterfactual",
+    "entry-counterfactual", "backtest-confirm",
 )
 
 
@@ -328,6 +328,16 @@ def _build_parser() -> argparse.ArgumentParser:
         "on purpose.",
     )
 
+    bc = sub.add_parser(
+        "backtest-confirm",
+        help="research: out-of-sample check of the completed-session entry "
+        "filter. Runs the skeleton, a delay-only variant and the confirm "
+        "variant over the same cached history and returns the PRE-REGISTERED "
+        "verdict. Read-only apart from its own results file.",
+    )
+    bc.add_argument("--start", required=True, help="YYYY-MM-DD")
+    bc.add_argument("--end", required=True, help="YYYY-MM-DD")
+
     sub.add_parser(
         "entry-counterfactual",
         help="replay the live PEAD trades under the mechanical completed-"
@@ -397,7 +407,7 @@ def _arm_watchdog(journal: Journal, command: str) -> None:
     # per trading day + price cohorts); wheel-screen makes ~5 network calls
     # per symbol across a ~35-name universe. Everything else keeps the tight
     # wall, and neither exception touches the broker.
-    if command == "backtest":
+    if command in ("backtest", "backtest-confirm"):
         default = "3600"
     elif command in ("wheel-screen", "wheel-cover", "wheel-score",
                      "entry-counterfactual"):

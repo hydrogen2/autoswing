@@ -44,7 +44,59 @@ DEFAULTS = {
     "max_stop_distance_pct": 8.0,  # playbook: stop farther than this = too hot
     "max_pullback_pct": 3.0,     # drift intact between reaction close and entry eve
     "max_hold_days": 15,         # same time-box the live book uses
+    # skeleton: enter the open after D+1 (the original model).
+    # delay:    always enter the open two sessions after the REACTION day,
+    #           same 3% pullback tolerance (descriptive only).
+    # confirm:  as delay, but the session after the reaction day must CLOSE
+    #           at or above the reaction-day close (the completed-session rule).
+    "entry_mode": "skeleton",
 }
+
+# -- completed-session filter: out-of-sample check ------------------------------
+# The live replay (2026-10-05, n=33) passed its pre-registered bar thinly. This
+# asks the same question of 2023-25, which the rule has never seen. Committed
+# BEFORE the confirm variant was run.
+#
+# PRE-REGISTERED BAR, confirm vs skeleton on identical data and fill model:
+#   supports_hard_rule   : avg R higher AND total R higher overall AND total R
+#                          higher in at least 2 of the 3 calendar years.
+#   better_per_trade_only: avg R higher, but total R is not (overall, or in
+#                          fewer than 2 years) -- better selection that makes
+#                          less money in total is a sizing question, not a
+#                          case for a hard entry rule.
+#   no_support           : avg R not higher.
+# The "delay" variant is reported for interpretation only and cannot change
+# the verdict. Standing caveats: inferred reaction days, survivorship,
+# mechanical skeleton only, stop = reaction low capped at 8% (the live replay
+# used the live trade's stop and a 12% ceiling).
+CONFIRM_REGISTERED = "2026-10-05"
+CONFIRM_BAR = ("confirm vs skeleton: avg R higher AND total R higher overall "
+               "AND total R higher in >= 2 of 3 years")
+
+
+def confirm_verdict(skeleton: dict, confirm: dict) -> dict:
+    """skeleton/confirm are run_backtest results."""
+    so, co = skeleton["overall"], confirm["overall"]
+    years = sorted(set(skeleton["by_year"]) | set(confirm["by_year"]))
+    year_wins = [y for y in years
+                 if confirm["by_year"].get(y, {}).get("total_r", 0.0)
+                 > skeleton["by_year"].get(y, {}).get("total_r", 0.0)]
+    out = {"bar": CONFIRM_BAR, "registered": CONFIRM_REGISTERED,
+           "skeleton": {k: so.get(k) for k in ("n", "hit_rate", "avg_r", "total_r")},
+           "confirm": {k: co.get(k) for k in ("n", "hit_rate", "avg_r", "total_r")},
+           "years_total_r_higher": year_wins, "years": years}
+    if not co.get("n") or not so.get("n"):
+        out["verdict"] = "undeterminable"
+        return out
+    avg_up = co["avg_r"] > so["avg_r"]
+    tot_up = co["total_r"] > so["total_r"]
+    if not avg_up:
+        out["verdict"] = "no_support"
+    elif tot_up and len(year_wins) >= 2:
+        out["verdict"] = "supports_hard_rule"
+    else:
+        out["verdict"] = "better_per_trade_only"
+    return out
 
 # Price window around a report: 20 sessions of pre-report ADV needs ~45
 # calendar days back; entry ~D+2 plus a 15-trading-day time-box needs ~45 forward.
@@ -162,14 +214,21 @@ def simulate_candidate(report: Report, df: pd.DataFrame, params: dict) -> dict:
     # Decision needs both D and D+1 closed (see module docstring): entry is
     # the open of the session after D+1, which is >= reaction_idx + 1.
     after = [i for i, d in enumerate(dates) if d > rdate]
-    entry_idx = after[0] + 1
+    mode = params.get("entry_mode", "skeleton")
+    # delay/confirm anchor on the REACTION day, which is never earlier than
+    # the skeleton's entry, so the lookahead rule above still holds.
+    entry_idx = after[0] + 1 if mode == "skeleton" else reaction_idx + 2
     if entry_idx >= len(df):
         return {**rec, "outcome": "skip", "reason": "no_entry_session"}
 
-    # Drift intact between reaction close and entry eve.
-    eve_closes = df["Close"].iloc[reaction_idx + 1:entry_idx]
-    if len(eve_closes) and float(eve_closes.min()) < r_close * (1 - params["max_pullback_pct"] / 100):
-        return {**rec, "outcome": "skip", "reason": "drift_broken"}
+    if mode == "confirm":
+        if float(df["Close"].iloc[reaction_idx + 1]) < r_close:
+            return {**rec, "outcome": "skip", "reason": "no_confirmation"}
+    else:
+        # Drift intact between reaction close and entry eve.
+        eve_closes = df["Close"].iloc[reaction_idx + 1:entry_idx]
+        if len(eve_closes) and float(eve_closes.min()) < r_close * (1 - params["max_pullback_pct"] / 100):
+            return {**rec, "outcome": "skip", "reason": "drift_broken"}
 
     entry_price = float(df["Open"].iloc[entry_idx])
     stop = float(df["Low"].iloc[reaction_idx])
@@ -187,7 +246,9 @@ def simulate_candidate(report: Report, df: pd.DataFrame, params: dict) -> dict:
         entry_price=entry_price, quantity=quantity,
         stop_loss=stop, take_profit=target,
     )
-    event = mark_position(pos, df, dates[-1], params["max_hold_days"])
+    # Entry is AT the open, so the entry bar's full range is post-entry.
+    event = mark_position(pos, df, dates[-1], params["max_hold_days"],
+                          entry_at_open=True)
     if event is None:
         return {**rec, "outcome": "open_at_data_end"}
 

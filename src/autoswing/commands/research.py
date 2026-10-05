@@ -78,6 +78,8 @@ def _dispatch_data(config, journal: Journal, args):
             for name, stats in comparison.items()
         })
         return comparison
+    if args.command == "backtest-confirm":
+        return _backtest_confirm(config, journal, args)
     if args.command == "entry-counterfactual":
         return _entry_counterfactual(journal)
     if args.command == "fill-quality":
@@ -1209,3 +1211,39 @@ def _entry_counterfactual(journal: Journal):
                    all_scorable=result["all_scorable"],
                    unscorable=len(result["unscorable"]))
     return result
+
+
+def _backtest_confirm(config, journal: Journal, args):
+    """Skeleton vs delay vs confirm on identical cached history."""
+    from datetime import date
+
+    from ..backtest import confirm_verdict, run_backtest
+    from ..config import PROJECT_ROOT
+
+    start, end = date.fromisoformat(args.start), date.fromisoformat(args.end)
+    root = PROJECT_ROOT / "state" / "backtest"
+    runs = {mode: run_backtest(start, end, config.risk, root,
+                               {"entry_mode": mode})
+            for mode in ("skeleton", "delay", "confirm")}
+    verdict = confirm_verdict(runs["skeleton"], runs["confirm"])
+
+    def t_stat(trades):
+        rs = [t["r_multiple"] for t in trades]
+        if len(rs) < 2:
+            return None
+        m = sum(rs) / len(rs)
+        var = sum((r - m) ** 2 for r in rs) / (len(rs) - 1)
+        return round(m / (var / len(rs)) ** 0.5, 2) if var else None
+
+    summary = {mode: {"overall": r["overall"], "by_year": r["by_year"],
+                      "t_stat_avg_r": t_stat(r["trades"]),
+                      "skips": r["funnel"]["skips"]}
+               for mode, r in runs.items()}
+    out = root / f"confirm-{args.start}-{args.end}.json"
+    out.write_text(json.dumps({"verdict": verdict, "runs": runs}, indent=1))
+    journal.record("research.backtest_confirm", range=[args.start, args.end],
+                   verdict=verdict,
+                   overall={m: s["overall"] for m, s in summary.items()})
+    return {"verdict": verdict, "summary": summary,
+            "note": "delay is descriptive only and cannot change the verdict",
+            "results_file": str(out)}
