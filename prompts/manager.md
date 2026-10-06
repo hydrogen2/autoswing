@@ -85,9 +85,15 @@ and the whole day's report was lost. Therefore:
    (c) forecast experiment — read state/forecast/
    (forecasts.jsonl + scores.jsonl) and report n scored, hit rates and
    calibration BY TIER (deep vs quick); flag when a tier crosses n>=30
-   with a hit rate outside 45-55% — that is signal either direction.
-   Keep raw, strategy-only, shadow, and forecast lines clearly separated;
-   never blend them.
+   with a hit rate outside 45-55% — that is signal either direction;
+   (d) wheel book — run `wheel-score` (read-only, already allowlisted;
+   there is no `wheel-status`) and report cycles open/closed, vs_hold_usd
+   and the verdict line. Premium collected is never the headline: the book
+   is scored against owning the same stock. No verdict before 40 closed
+   cycles. The brain runs the book on Wednesdays only; on other days just
+   carry the line.
+   Keep raw, strategy-only, shadow, forecast, and wheel lines clearly
+   separated; never blend them.
 4b. **Gate-rejection audit**: count today's gate.decision rejections BY RULE
    and compare against the last few days. A rising share of portfolio-level
    rejections (max_gross_exposure, max_open_positions, kill_switch,
