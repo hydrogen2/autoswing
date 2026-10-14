@@ -89,4 +89,15 @@ ls -1 "$BACKUP_REPO"/autoswing-backup-*.tar.gz.enc 2>/dev/null | sort | head -n 
 git add -A
 git commit -q -m "backup $(date -u +%F)" 2>/dev/null || { log "nothing new to commit"; exit 0; }
 git push -q
-log "OK $(basename "$OUT") ($(du -h "$OUT" | cut -f1)); kept $(ls -1 "$BACKUP_REPO"/autoswing-backup-*.tar.gz.enc | wc -l) artifacts, .git $(du -sm "$BACKUP_REPO/.git" | cut -f1)M"
+GIT_MB=$(du -sm "$BACKUP_REPO/.git" | cut -f1)
+log "OK $(basename "$OUT") ($(du -h "$OUT" | cut -f1)); kept $(ls -1 "$BACKUP_REPO"/autoswing-backup-*.tar.gz.enc | wc -l) artifacts, .git ${GIT_MB}M"
+
+# History still holds every blob ever pushed. When .git passes the ceiling,
+# squash it to the newest KEEP_DAYS artifacts (owner ruling 2026-10-14; see
+# backup_squash.sh). Failure here is logged and alerted but never undoes
+# tonight's successful backup.
+SQUASH_AT_MB=1500
+if [ "$GIT_MB" -gt "$SQUASH_AT_MB" ]; then
+  KEEP="$KEEP_DAYS" "$REPO/scripts/backup_squash.sh" >>"$LOG" 2>&1 \
+    || alert "history squash FAILED (.git ${GIT_MB}M)" "Nightly backup succeeded, but squashing the backup repo's history failed. .git is ${GIT_MB}M and will keep growing ~55M/day until scripts/backup_squash.sh runs clean. See backup.log."
+fi
