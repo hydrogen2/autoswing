@@ -82,6 +82,12 @@ and the whole day's report was lost. Therefore:
    it in the report until ruled. If the owner keeps it running, trades
    after #25 are a NEW out-of-sample period: propose a fresh
    pre-registered check for it, never a revision of the first 25;
+   (b2) wide book — quote `shadow-status` -> wide.preregistered_verdict
+   as-is (verdict, sample_n/40, paired n, dollar/avg-R gains). Approved by
+   the owner 10-14 on your 10-09 proposal; the rule and its definitions
+   are CLOSED to revision. The verdict is a DISCUSSION trigger only; no
+   sizing or playbook change follows from it automatically, and the
+   unpaired rows are information, never part of the verdict;
    (c) forecast experiment — read state/forecast/
    (forecasts.jsonl + scores.jsonl) and report n scored, hit rates and
    calibration BY TIER (deep vs quick); flag when a tier crosses n>=30

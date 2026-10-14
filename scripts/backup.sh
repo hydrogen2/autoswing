@@ -76,7 +76,17 @@ openssl enc -d -aes-256-cbc -pbkdf2 -pass env:BACKUP_PASS -in "$OUT" \
   | tar tzf - >/dev/null
 
 cd "$BACKUP_REPO"
+# Retention (owner ruling 2026-10-14): keep the newest KEEP_DAYS artifacts.
+# Each artifact is a FULL snapshot (journal/ and state/ are cumulative), so an
+# older one adds nothing the newest does not already hold. 90 days of them
+# filled the disk on 10-10. Note this only bounds the working tree: git
+# history still holds every blob ever committed, so the repo's .git grows
+# ~55M/day until its history is squashed (an owner-run step; see the
+# 2026-10-14 report).
+KEEP_DAYS=14
+ls -1 "$BACKUP_REPO"/autoswing-backup-*.tar.gz.enc 2>/dev/null | sort | head -n -"$KEEP_DAYS" \
+  | while read -r old; do git rm -q --cached "$old" 2>/dev/null || true; rm -f "$old"; done
 git add -A
 git commit -q -m "backup $(date -u +%F)" 2>/dev/null || { log "nothing new to commit"; exit 0; }
 git push -q
-log "OK $(basename "$OUT") ($(du -h "$OUT" | cut -f1))"
+log "OK $(basename "$OUT") ($(du -h "$OUT" | cut -f1)); kept $(ls -1 "$BACKUP_REPO"/autoswing-backup-*.tar.gz.enc | wc -l) artifacts, .git $(du -sm "$BACKUP_REPO/.git" | cut -f1)M"

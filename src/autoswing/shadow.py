@@ -352,3 +352,117 @@ def verdict_alert(verdict: dict, already_alerted: dict | None) -> str | None:
         f"Closed so far in total: {verdict.get('closed_total')}.",
     ]
     return "\n".join(lines) + "\n"
+
+
+# --- pre-registered wide-ledger verdict (owner-approved 2026-10-14) ------------
+# Manager's 10-09 proposal, approved at 23 closed (+0.99% avg alpha): fix the
+# rule before the number gets persuasive. Verbatim: at 40 closed, a PAIRED
+# wide-vs-live comparison on the same trades; a playbook DISCUSSION only if
+# wide beats live on both total dollars and avg_r AND the gain survives
+# dropping wide's single best trade. Explicitly not size-down-to-widen.
+#
+# Definitions fixed here so they cannot be chosen after the fact:
+#   - Sample: the FIRST 40 wide closes in ledger order (frozen, like v2).
+#   - Pair: a wide close whose symbol+opened matches a live trade with a
+#     realized exit. Unpaired wide closes (taken by wide, not by live) are
+#     reported alongside for information and never enter the verdict.
+#   - Live dollars are rescaled to the wide book's standardized notional
+#     (quantity = WIDE_NOTIONAL // entry), because the proposal excludes
+#     sizing: raw dollars would mostly measure position size.
+#   - R for both legs uses the live trade's stop (paired trades share the
+#     bracket; the wide ledger row does not persist its stop).
+#   - "Survives dropping wide's best trade": remove the pair with the highest
+#     wide P&L, and BOTH margins must still be positive.
+# Limitation, stated up front: on paired trades the two books share stop and
+# target, so this measures fill/entry-price drift, not the stop ceiling. The
+# ceiling question lives in the stop-geometry replay (research.py).
+WIDE_VERDICT_N = 40
+WIDE_VERDICT_MIN_PAIRS = 20
+WIDE_VERDICT_REGISTERED = "2026-10-14"
+WIDE_VERDICT_RULE = ("first 40 wide closes; paired with live realized exits; "
+                     "discussion only if wide beats live on total dollars (live "
+                     "rescaled to wide notional) AND avg R, and both margins "
+                     "survive dropping wide's best trade")
+
+
+def _pair_stats(pairs: list[dict]) -> dict:
+    n = len(pairs)
+    if not n:
+        return {"n": 0}
+    return {
+        "n": n,
+        "wide_total_pnl": round(sum(p["wide_pnl"] for p in pairs), 2),
+        "live_total_pnl_rescaled": round(sum(p["live_pnl_rescaled"] for p in pairs), 2),
+        "wide_avg_r": round(sum(p["wide_r"] for p in pairs) / n, 3),
+        "live_avg_r": round(sum(p["live_r"] for p in pairs) / n, 3),
+    }
+
+
+def wide_verdict(wide_rows: list[dict], live_closed: dict) -> dict:
+    """live_closed: "SYMBOL-YYYY-MM-DD" -> object with entry_limit, stop_loss,
+    exit_price (None if unknown)."""
+    sample = wide_rows[:WIDE_VERDICT_N]
+    pairs, unpaired = [], []
+    for r in sample:
+        key = f"{r['symbol']}-{r['opened']}"
+        lt = live_closed.get(key)
+        if lt is None or getattr(lt, "exit_price", None) is None:
+            unpaired.append({"symbol": r["symbol"], "opened": r["opened"],
+                             "pnl": r["pnl"], "alpha_pct": r.get("alpha_pct")})
+            continue
+        risk = lt.entry_limit - lt.stop_loss
+        if risk <= 0 or r["entry_price"] <= lt.stop_loss:
+            unpaired.append({"symbol": r["symbol"], "opened": r["opened"],
+                             "pnl": r["pnl"], "note": "unusable stop geometry"})
+            continue
+        qty = int(WIDE_NOTIONAL // lt.entry_limit)
+        pairs.append({
+            "symbol": r["symbol"], "opened": r["opened"],
+            "wide_pnl": r["pnl"],
+            "wide_r": round((r["exit_price"] - r["entry_price"])
+                            / (r["entry_price"] - lt.stop_loss), 3),
+            "live_pnl_rescaled": round((lt.exit_price - lt.entry_limit) * qty, 2),
+            "live_r": round((lt.exit_price - lt.entry_limit) / risk, 3),
+        })
+    out = {
+        "rule": WIDE_VERDICT_RULE, "registered": WIDE_VERDICT_REGISTERED,
+        "required_n": WIDE_VERDICT_N, "sample_n": len(sample),
+        "closed_total": len(wide_rows), "paired": _pair_stats(pairs),
+        "unpaired": {"n": len(unpaired),
+                     "total_pnl": round(sum(u["pnl"] for u in unpaired), 2),
+                     "rows": unpaired},
+        "limitation": "paired trades share stop and target: this measures "
+                      "fill/entry drift, not the stop ceiling",
+    }
+    if len(sample) < WIDE_VERDICT_N:
+        out.update(verdict="pending", remaining=WIDE_VERDICT_N - len(sample),
+                   note="progress, not a result")
+        return out
+    if len(pairs) < WIDE_VERDICT_MIN_PAIRS:
+        out.update(verdict="insufficient_pairs",
+                   reasons=[f"{len(pairs)} pairs < {WIDE_VERDICT_MIN_PAIRS}"])
+        return out
+    s = out["paired"]
+    d_gain = round(s["wide_total_pnl"] - s["live_total_pnl_rescaled"], 2)
+    r_gain = round(s["wide_avg_r"] - s["live_avg_r"], 3)
+    reasons = []
+    if d_gain <= 0:
+        reasons.append(f"dollars: wide {s['wide_total_pnl']} vs live "
+                       f"{s['live_total_pnl_rescaled']} (no gain)")
+    if r_gain <= 0:
+        reasons.append(f"avg R: wide {s['wide_avg_r']} vs live {s['live_avg_r']} (no gain)")
+    out.update(dollar_gain=d_gain, avg_r_gain=r_gain)
+    if not reasons:
+        best = max(pairs, key=lambda p: p["wide_pnl"])
+        rest = _pair_stats([p for p in pairs if p is not best])
+        d2 = round(rest["wide_total_pnl"] - rest["live_total_pnl_rescaled"], 2)
+        r2 = round(rest["wide_avg_r"] - rest["live_avg_r"], 3)
+        out.update(dropped_best={"symbol": best["symbol"], "wide_pnl": best["wide_pnl"]},
+                   dollar_gain_ex_best=d2, avg_r_gain_ex_best=r2)
+        if d2 <= 0 or r2 <= 0:
+            reasons.append(f"gain rests on {best['symbol']}: without it dollars "
+                           f"{d2:+}, avg R {r2:+}")
+    out.update(verdict="no_case" if reasons else "playbook_discussion",
+               reasons=reasons or ["wide beats live on both, and both margins "
+                                   "survive dropping wide's best trade"])
+    return out

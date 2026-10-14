@@ -165,4 +165,14 @@ def _shadow_status():
             # Pre-registered 2026-09-29; the report quotes this, it does not
             # recompute or reinterpret it.
             out[label]["preregistered_verdict"] = v2_verdict(load_ledger(ledger_path))
+        if label == "wide":
+            # Pre-registered 2026-10-14 (owner-approved); same rule: quoted,
+            # never reinterpreted.
+            from ..config import PROJECT_ROOT
+            from ..lessons import extract_closed_trades
+            from ..shadow import wide_verdict
+
+            live = {c.id: c for c in extract_closed_trades(PROJECT_ROOT / "journal")}
+            out[label]["preregistered_verdict"] = wide_verdict(
+                load_ledger(ledger_path), live)
     return out
