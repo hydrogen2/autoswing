@@ -24,18 +24,39 @@ export PATH="/home/supper-user/.local/bin:$PATH"
 log() { echo "$(date -Is) $*" >>"$LOG"; }
 
 alert() {  # subject-suffix, body
-  local body="$REPO/state/reports/backup-failure-$(date -u +%F).md"
-  printf '%s\n' "$2" > "$body"
+  # The body is written to RAM (/dev/shm), not the disk: on 2026-10-10/11
+  # the disk was full, the body file came out 0 bytes, and the owner got two
+  # BLANK alert emails about a failure caused by the disk being full. The
+  # on-disk copy under state/reports is kept for the record but is allowed
+  # to fail. The subject carries the reason, so even an empty body says why.
+  local body="/dev/shm/autoswing-backup-alert-$(date -u +%F).md"
+  local keep="$REPO/state/reports/backup-failure-$(date -u +%F).md"
+  printf '%s\n\n%s\n' "$2" "$(df -h / 2>/dev/null | tail -1)" > "$body" 2>/dev/null \
+    || body="/dev/null"
+  cp "$body" "$keep" 2>/dev/null || log "could not keep alert body on disk"
   (cd "$REPO" && uv run python scripts/send_report.py \
      --subject "autoswing ALERT: nightly backup $1" --body-file "$body") \
      >>"$LOG" 2>&1 || log "alert email failed too"
 }
 
-trap 'log "FAILED at line $LINENO"; alert "FAILED" "Nightly backup failed at $(date -Is), line $LINENO. Check state/brain/logs/backup.log on the server."' ERR
+trap 'log "FAILED at line $LINENO"; alert "FAILED at line $LINENO ($(df -h / 2>/dev/null | awk "NR==2{print \$4}") free)" "Nightly backup failed at $(date -Is), line $LINENO. Check state/brain/logs/backup.log on the server."' ERR
 
 BACKUP_PASS=$(grep '^BACKUP_PASS=' "$REPO/.secrets.env" | cut -d= -f2-)
 [ -n "$BACKUP_PASS" ] || { log "no BACKUP_PASS in .secrets.env"; alert "MISCONFIGURED" "BACKUP_PASS missing from .secrets.env — backups cannot run."; exit 1; }
 export BACKUP_PASS
+
+# Disk preflight. A backup needs room for the artifact (~55M), its git
+# object (same again) and the decrypt-verify pass; below this floor the run
+# would fail part-way and, worse, leave the trading-hours journal/state
+# writes with nothing to write into. Refuse loudly instead.
+MIN_FREE_MB=600
+FREE_MB=$(df -Pm / | awk 'NR==2{print $4}')
+if [ "${FREE_MB:-0}" -lt "$MIN_FREE_MB" ]; then
+  log "SKIP: only ${FREE_MB}M free on / (floor ${MIN_FREE_MB}M)"
+  alert "SKIPPED: disk nearly full (${FREE_MB}M free)" \
+    "Backup not attempted: only ${FREE_MB}M free on / (floor ${MIN_FREE_MB}M). Free space on the server before the next trading session — journal and state writes are at risk."
+  exit 1
+fi
 
 # Quiet hours; still take the lock briefly so we never snapshot mid-write.
 exec 9>"$LOCK"

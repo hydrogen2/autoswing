@@ -316,7 +316,10 @@ You will be told which window this run is. Do that window's checklist only.
 3. `benchmark-mark` — record the daily equity vs VOO mark.
 3b. `shadow-mark` — close out virtual positions (both v2 and wide-PEAD
    books) that hit stop/target/timebox; mention any shadow closes (with
-   virtual P&L, per book) in the digest.
+   virtual P&L, per book) in the digest. When the digest mentions the v2
+   verdict, quote `shadow-status` -> v2.preregistered_verdict verbatim
+   (verdict, sample_n/25) — never characterize the verdict state from
+   memory or from the day's closes.
 3c. `forecast-score` — score pending predictions whose prints are in;
    mention fresh scores (right/wrong, both tiers) in the digest.
 3d. V2 VOLUME CONFIRMATION. Run `scan-movers` and read `volume_verdict`
