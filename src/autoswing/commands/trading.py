@@ -250,6 +250,27 @@ def _manage_positions(broker: Broker, enforce: bool, meta_path=None):
             )
             adopted.append(sym)
 
+    # The bracket-leg alert below qualifies its TEXT by session state: outside
+    # regular hours an exit leg CANNOT execute, so a mark that crossed a level
+    # after the close renders as "leg dead" when nothing is wrong (PENG
+    # 2026-10-14: an after-hours break below the stop fired the alert all
+    # night; the stop filled on the first in-session tick). The alert still
+    # fires either way — a cross that happened in-session and went unexecuted
+    # is the real HPE failure, and a snapshot alone cannot tell the two apart.
+    closed_note = ""
+    try:
+        from datetime import datetime
+
+        from ..calendar import ET, is_market_open
+        open_now, session_why = is_market_open(datetime.now(ET))
+        if not open_now:
+            closed_note = (
+                f"; market is closed ({session_why}) — exit legs cannot "
+                "execute now, so an out-of-session cross renders this way "
+                "with a working bracket; verify the fill after the next open")
+    except Exception:
+        pass  # calendar trouble must never block position management
+
     report = []
     for sym, pos in shorts.items():
         report.append({
@@ -313,12 +334,12 @@ def _manage_positions(broker: Broker, enforce: bool, meta_path=None):
                 entry["bracket_alert"] = (
                     f"mark {mark:g} beyond take-profit {m.take_profit:g} "
                     "with position still open — exit leg likely stuck at "
-                    "the broker; verify both legs")
+                    f"the broker; verify both legs{closed_note}")
             elif m.stop_loss > 0 and mark < m.stop_loss * 0.9975:
                 entry["bracket_alert"] = (
                     f"mark {mark:g} beyond stop {m.stop_loss:g} with "
                     "position still open — stop likely dead at the broker; "
-                    "position may be unprotected")
+                    f"position may be unprotected{closed_note}")
         if entry["bracket_alert"]:
             broker.journal.record("manage.bracket_alert", symbol=sym,
                                   detail=entry["bracket_alert"])

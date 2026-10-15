@@ -321,6 +321,53 @@ class TestBracketLegHealth:
         assert "stop" in entry["bracket_alert"]
         assert "manage.bracket_alert" in _events(journal)
 
+    def test_closed_session_alert_says_cannot_execute(
+        self, journal, meta_path, monkeypatch
+    ):
+        # PENG 2026-10-14: an after-hours break below the stop fired the
+        # alert all night as "stop likely dead" when a stop cannot execute
+        # outside regular hours at all. Closed-session alerts must still
+        # fire (an in-session cross discovered after close IS the HPE
+        # failure) but say the leg cannot execute right now.
+        import autoswing.calendar as cal
+        monkeypatch.setattr(
+            cal, "is_market_open",
+            lambda now: (False, "after close (session ended 16:00 ET)"))
+        result = _manage_positions(
+            self._broker(journal, 68.0), enforce=False, meta_path=meta_path)
+        alert = result["positions"][0]["bracket_alert"]
+        assert alert is not None  # never suppressed, only qualified
+        assert "cannot execute" in alert
+        assert "manage.bracket_alert" in _events(journal)
+
+    def test_open_session_alert_unqualified(
+        self, journal, meta_path, monkeypatch
+    ):
+        import autoswing.calendar as cal
+        monkeypatch.setattr(
+            cal, "is_market_open",
+            lambda now: (True, "regular session (closes 16:00 ET)"))
+        result = _manage_positions(
+            self._broker(journal, 68.0), enforce=False, meta_path=meta_path)
+        alert = result["positions"][0]["bracket_alert"]
+        assert alert is not None
+        assert "cannot execute" not in alert
+
+    def test_calendar_failure_still_alerts(
+        self, journal, meta_path, monkeypatch
+    ):
+        # Past calendar coverage is_market_open raises; the session note is
+        # cosmetic and must never take the safety alert down with it.
+        import autoswing.calendar as cal
+
+        def boom(now):
+            raise cal.CalendarExpired("coverage exceeded")
+        monkeypatch.setattr(cal, "is_market_open", boom)
+        result = _manage_positions(
+            self._broker(journal, 68.0), enforce=False, meta_path=meta_path)
+        assert result["positions"][0]["bracket_alert"] is not None
+        assert "manage.bracket_alert" in _events(journal)
+
     def test_mark_inside_bracket_no_alert(self, journal, meta_path):
         result = _manage_positions(
             self._broker(journal, 80.0), enforce=False, meta_path=meta_path)
