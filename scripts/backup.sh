@@ -88,7 +88,9 @@ ls -1 "$BACKUP_REPO"/autoswing-backup-*.tar.gz.enc 2>/dev/null | sort | head -n 
   | while read -r old; do git rm -q --cached "$old" 2>/dev/null || true; rm -f "$old"; done
 git add -A
 git commit -q -m "backup $(date -u +%F)" 2>/dev/null || { log "nothing new to commit"; exit 0; }
-git push -q
+# Explicit refspec: never depend on upstream tracking being configured
+# (the 2026-10-14 squash dropped it and 10-15's push failed for that alone).
+git push -q origin HEAD:main
 GIT_MB=$(du -sm "$BACKUP_REPO/.git" | cut -f1)
 log "OK $(basename "$OUT") ($(du -h "$OUT" | cut -f1)); kept $(ls -1 "$BACKUP_REPO"/autoswing-backup-*.tar.gz.enc | wc -l) artifacts, .git ${GIT_MB}M"
 

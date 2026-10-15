@@ -41,9 +41,13 @@ if [ "${#ALL[@]}" -gt "$KEEP" ]; then
 fi
 git add -A
 git commit -q -m "backup $(date -u +%F) — history squashed $(date -u +%F): newest $KEEP artifacts (each a full snapshot)"
+# `branch -D` drops the old branch's upstream config with it; -u restores it,
+# otherwise the next nightly `git push` fails with "no upstream branch"
+# (that is exactly what happened on 2026-10-15, the morning after the first
+# squash).
 git branch -D -q "$BRANCH"
 git branch -m "$BRANCH"
-git push -q --force origin "$BRANCH"
+git push -q --force -u origin "$BRANCH"
 git reflog expire --expire=now --all
 rm -f .git/objects/*/tmp_obj_* 2>/dev/null || true
 git gc -q --prune=now
