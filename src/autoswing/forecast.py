@@ -255,4 +255,63 @@ def compute_stats(forecasts: list[dict], scores: list[dict]) -> dict:
                         sum(s["reaction_correct"] for s in bucket) / len(bucket), 3),
                 }
         out["tiers"][tier] = tier_stats
+    out["depth_verdict"] = depth_verdict(scores)
+    return out
+
+
+# Pre-registered deep-vs-quick verdict (owner approved 2026-10-19 on the
+# manager's 10-16 proposal). Deep went 73.1% -> 69.8% -> 66.7% -> 65.8% across
+# four reads while quick sat ~70%; registering the rule BEFORE deep reaches
+# n=100 stops either side arguing with whichever way the number lands.
+# Discussion trigger only: the quick tier is unaffected and nothing changes
+# automatically. CLOSED to revision.
+DEPTH_VERDICT_N = 100
+DEPTH_PREMIUM_PP = 3.0
+DEPTH_VERDICT_REGISTERED = "2026-10-19"
+DEPTH_VERDICT_RULE = ("first 100 deep EPS scores (scorable, actual known); quick "
+                      "comparator = every quick EPS score dated at or before the "
+                      "100th deep score; 'depth_premium' only if deep beats quick "
+                      "by >= 3pp, else 'no_depth_premium'")
+
+
+def _eps_hit_rate(rows: list[dict]) -> float | None:
+    return round(100 * sum(r["eps_correct"] for r in rows) / len(rows), 1) if rows else None
+
+
+def depth_verdict(scores: list[dict]) -> dict:
+    """Frozen at the 100th deep EPS score: both samples are cut at that
+    score's timestamp so later quick scores cannot move the comparator."""
+    eps = sorted((s for s in scores
+                  if s.get("scorable") and s.get("eps_actual") != "unknown"),
+                 key=lambda s: s.get("scored_at", ""))
+    deep_all = [s for s in eps if s["tier"] == "deep"]
+    deep = deep_all[:DEPTH_VERDICT_N]
+    frozen = len(deep) >= DEPTH_VERDICT_N
+    cutoff = deep[-1].get("scored_at", "") if frozen else None
+    quick = [s for s in eps if s["tier"] == "quick"
+             and (cutoff is None or s.get("scored_at", "") <= cutoff)]
+    out = {
+        "rule": DEPTH_VERDICT_RULE, "registered": DEPTH_VERDICT_REGISTERED,
+        "required_n": DEPTH_VERDICT_N, "premium_pp": DEPTH_PREMIUM_PP,
+        "deep_n": len(deep), "deep_eps_hit_pct": _eps_hit_rate(deep),
+        "quick_n": len(quick), "quick_eps_hit_pct": _eps_hit_rate(quick),
+        "note": "discussion trigger only; quick tier unaffected",
+    }
+    if not frozen:
+        out.update(verdict="pending", remaining=DEPTH_VERDICT_N - len(deep))
+        return out
+    if not quick:
+        out.update(verdict="no_comparator", reasons=["no quick EPS scores"])
+        return out
+    out["frozen_at"] = cutoff
+    margin = round(out["deep_eps_hit_pct"] - out["quick_eps_hit_pct"], 1)
+    out["margin_pp"] = margin
+    if margin >= DEPTH_PREMIUM_PP:
+        out.update(verdict="depth_premium",
+                   reasons=[f"deep {out['deep_eps_hit_pct']}% vs quick "
+                            f"{out['quick_eps_hit_pct']}% = +{margin}pp >= {DEPTH_PREMIUM_PP}pp"])
+    else:
+        out.update(verdict="no_depth_premium",
+                   reasons=[f"deep {out['deep_eps_hit_pct']}% vs quick "
+                            f"{out['quick_eps_hit_pct']}% = {margin:+}pp < {DEPTH_PREMIUM_PP}pp"])
     return out

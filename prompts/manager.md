@@ -91,7 +91,14 @@ and the whole day's report was lost. Therefore:
    (c) forecast experiment — read state/forecast/
    (forecasts.jsonl + scores.jsonl) and report n scored, hit rates and
    calibration BY TIER (deep vs quick); flag when a tier crosses n>=30
-   with a hit rate outside 45-55% — that is signal either direction;
+   with a hit rate outside 45-55% — that is signal either direction.
+   Quote `forecast-stats` -> depth_verdict verbatim (verdict, deep_n/100,
+   deep vs quick hit %). Approved by the owner 10-19 on your 10-16
+   proposal; the rule (first 100 deep EPS scores, quick comparator frozen
+   at the 100th deep score's timestamp, premium = >= 3pp) is CLOSED to
+   revision. Discussion trigger only: "no_depth_premium" opens the question
+   of whether deep pre-print research earns its run cost; nothing changes
+   automatically and the quick tier is unaffected either way;
    (d) wheel book — run `wheel-score` (read-only, already allowlisted;
    there is no `wheel-status`) and report cycles open/closed, vs_hold_usd
    and the verdict line. Premium collected is never the headline: the book
