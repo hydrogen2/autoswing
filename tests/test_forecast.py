@@ -94,6 +94,17 @@ class TestScoring:
         assert s["eps_correct"] is None
         assert s["reaction_correct"] is True and s["scorable"]
 
+    def test_unknown_eps_with_no_reaction_leg_unscorable(self):
+        # Regression (IBN 2026-10-22): quick tier forecasts no reaction, so
+        # when the EPS actual never arrived the row measured NOTHING — yet
+        # "not_forecast" != "unknown" satisfied the old scorable check and
+        # the burn counted toward n_scored.
+        s = score_forecast(self.fc(reaction_call=None, tier="quick"),
+                           surprise_pct=None, move_pct=1.87, scored_at="t")
+        assert s["eps_actual"] == "unknown"
+        assert s["reaction_actual"] == "not_forecast"
+        assert not s["scorable"]
+
     def test_not_forecast_reaction_scores_none(self):
         # Quick tier post-2026-08-20 omits reaction_call; the leg is
         # deliberately absent, not wrong.

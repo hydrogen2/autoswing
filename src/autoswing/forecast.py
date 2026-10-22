@@ -218,7 +218,12 @@ def score_forecast(fc: dict, surprise_pct: float | None,
                              + ("flat",)
                              else reaction_actual == fc.get("reaction_call")),
         "confidence": fc["confidence"],
-        "scorable": eps_actual != "unknown" or reaction_actual != "unknown",
+        # True only if at least one leg was MEASURED. "not_forecast" is not a
+        # measurement: a quick-tier row with eps_actual "unknown" has zero
+        # measured legs and must not count as scored (IBN 2026-10-22 burned
+        # this way and still inflated n_scored).
+        "scorable": (eps_actual != "unknown"
+                     or reaction_actual in REACTION_CALLS + ("flat",)),
     }
 
 
