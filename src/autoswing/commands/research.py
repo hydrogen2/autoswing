@@ -922,7 +922,8 @@ def _wheel_expire(journal: Journal):
     if resolved:
         write_jsonl(cpath, cycles)
     journal.record("wheel.expired", resolved=len(resolved),
-                   unresolved=len(unresolved), detail=resolved)
+                   unresolved=len(unresolved), detail=resolved,
+                   unresolved_detail=unresolved)
     return {"resolved": len(resolved), "detail": resolved,
             "unresolved": unresolved, "cycles": len(cycles)}
 
@@ -970,7 +971,8 @@ def _wheel_cover(journal: Journal):
     if covered:
         write_jsonl(cpath, cycles)
     journal.record("wheel.covered", covered=len(covered),
-                   skipped=len(skipped), detail=covered)
+                   skipped=len(skipped), detail=covered,
+                   skipped_detail=skipped)
     return {"covered": len(covered), "detail": covered, "uncovered": skipped}
 
 

@@ -505,3 +505,74 @@ def test_guard_allows_manual_invocation_any_day(monkeypatch):
     monkeypatch.delenv("AUTOSWING_WINDOW", raising=False)
     thursday = _datetime(2026, 9, 24, 12, 30)
     _wheel_wednesday_guard("wheel-log", now_et=thursday)  # no raise
+
+
+# -- journal detail for skips/unresolved ----------------------------------------
+# Regression for 2026-10-21: the journal showed "wheel.covered: skipped=2,
+# detail=[]" -- the WHY of holding two assigned positions uncovered was built,
+# returned to the caller once, and never persisted. A decision that renders in
+# the permanent record as an unexplained count is the benign-silence failure
+# shape; the journal must carry the reasons, not just the tally.
+
+import json as _json
+
+from autoswing.commands.research import _wheel_cover, _wheel_expire
+
+
+class _FakeJournal:
+    def __init__(self):
+        self.events = []
+
+    def record(self, event, **payload):
+        self.events.append({"event": event, **payload})
+        return self.events[-1]
+
+
+def _cycles_file(tmp_path, cycle):
+    cpath = tmp_path / "cycles.jsonl"
+    cpath.write_text(_json.dumps(cycle) + "\n")
+    return cpath
+
+
+def test_cover_journals_skip_reasons(monkeypatch, tmp_path):
+    monkeypatch.delenv("AUTOSWING_WINDOW", raising=False)
+    cpath = _cycles_file(tmp_path, {
+        "id": "MOS-t", "symbol": "MOS", "status": "assigned", "strike": 23.0,
+        "premium_received": 0.5, "contracts": 1, "spot_at_open": 23.5,
+        "opened": "2026-09-24", "shares": 100,
+    })
+    monkeypatch.setattr("autoswing.commands.research._wheel_paths",
+                        lambda: (cpath, tmp_path / "screens.jsonl"))
+    monkeypatch.setattr("autoswing.data.options.call_rows",
+                        lambda symbol, today: (None, []))
+
+    journal = _FakeJournal()
+    out = _wheel_cover(journal)
+
+    assert out["covered"] == 0 and out["uncovered"][0]["why"]
+    (ev,) = [e for e in journal.events if e["event"] == "wheel.covered"]
+    assert ev["skipped"] == 1
+    assert ev["skipped_detail"][0]["id"] == "MOS-t"
+    assert ev["skipped_detail"][0]["why"]
+
+
+def test_expire_journals_unresolved_reasons(monkeypatch, tmp_path):
+    monkeypatch.delenv("AUTOSWING_WINDOW", raising=False)
+    cpath = _cycles_file(tmp_path, {
+        "id": "NU-t", "symbol": "NU", "status": "csp_open", "strike": 12.5,
+        "premium_received": 0.19, "contracts": 1, "spot_at_open": 13.0,
+        "opened": "2026-09-24", "expiry": "2026-10-16",
+    })
+    monkeypatch.setattr("autoswing.commands.research._wheel_paths",
+                        lambda: (cpath, tmp_path / "screens.jsonl"))
+    monkeypatch.setattr("autoswing.data.prices.fetch_history",
+                        lambda symbols, period="3mo": {})
+
+    journal = _FakeJournal()
+    out = _wheel_expire(journal)
+
+    assert out["resolved"] == 0 and out["unresolved"][0]["why"]
+    (ev,) = [e for e in journal.events if e["event"] == "wheel.expired"]
+    assert ev["unresolved"] == 1
+    assert ev["unresolved_detail"][0]["id"] == "NU-t"
+    assert ev["unresolved_detail"][0]["why"]
