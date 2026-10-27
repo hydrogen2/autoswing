@@ -147,6 +147,11 @@ You will be told which window this run is. Do that window's checklist only.
    JSON fields: symbol, report_date, timing (bmo/amc/unknown), tier,
    eps_call (beat/miss/inline), confidence (0.5-1.0, honest — calibration
    is scored), reasoning.
+   SCORABILITY: only log names the scorer can measure. Skip a name when
+   `scan-upcoming` shows no consensus EPS, when it is a foreign ADR or a
+   thin-coverage name whose actuals rarely reach the feed (IBN, HUBG, NB,
+   ANAB, RCBC all burned as "unknown"), or when its report date keeps
+   sliding. An unmeasurable forecast costs research time and proves nothing.
    GRADING BASIS: eps_call means beat/miss/inline vs the consensus number
    shown by `scan-upcoming` — the scorer grades against that same figure,
    so anchor the call to it even when live street numbers differ (CSCO

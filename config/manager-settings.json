@@ -8,6 +8,7 @@
       "Bash(uv run autoswing exit-counterfactuals:*)",
       "Bash(uv run autoswing skip-outcomes:*)",
       "Bash(uv run autoswing forecast-stats:*)",
+      "Bash(uv run autoswing insider-outcomes:*)",
       "Bash(uv run autoswing fill-quality:*)",
       "Bash(uv run autoswing wheel-score:*)",
       "Bash(uv run autoswing tone-outcomes:*)",

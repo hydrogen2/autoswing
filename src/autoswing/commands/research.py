@@ -7,6 +7,9 @@ import sys
 from ..journal import Journal
 
 
+FORECAST_GRACE_DAYS = 10  # calendar days a forecast waits for actuals before burning as unknown
+
+
 def _dispatch_data(config, journal: Journal, args):
     if args.command == "scan-candidates":
         from ..data.candidates import scan
@@ -813,7 +816,12 @@ def _forecast_score(journal: Journal):
                     if df is not None else None)
         move = reaction.move_pct if reaction else None
 
-        grace_expired = (today - rdate).days > 5
+        # Owner ruling 2026-10-27 (manager ask 10-22): 5 -> 10 days. The
+        # actuals feed lags on foreign ADRs / thin-coverage names (IBN,
+        # HUBG, NB, ANAB, RCBC); ~10% of rows burned as "unknown" inside
+        # 5 days. Changes which rows become measurable, never how any
+        # verdict reads them (verdicts count known-actual rows only).
+        grace_expired = (today - rdate).days > FORECAST_GRACE_DAYS
         if awaiting_actuals(surprise, move, grace_expired):
             still_pending += 1  # a leg is still unpublished; retry next run
             continue

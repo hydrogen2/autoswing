@@ -68,7 +68,7 @@ class TestScoringFallback:
     def test_yfinance_fallback_rescues_missing_calendar_actuals(
             self, tmp_path, monkeypatch):
         # DSGX shape: no usable day-row six days after a real print.
-        rdate = date.today() - timedelta(days=7)
+        rdate = date.today() - timedelta(days=12)
         fc = _forecast_row("DSGX", rdate, eps_call="beat")
         out, scores = _run_score(tmp_path, monkeypatch, fc,
                                  calendar_reports=[], fallback_surprise=12.0)
@@ -79,7 +79,7 @@ class TestScoringFallback:
 
     def test_day_row_without_surprise_derives_from_its_eps_fields(
             self, tmp_path, monkeypatch):
-        rdate = date.today() - timedelta(days=7)
+        rdate = date.today() - timedelta(days=12)
         fc = _forecast_row("LPTH", rdate, eps_call="beat")
         row = Report(symbol="LPTH", report_date=rdate.isoformat(),
                      timing="amc", eps_actual=0.60, eps_forecast=0.50,
@@ -98,7 +98,7 @@ class TestScoringFallback:
 
     def test_grace_open_still_defers_when_no_source_has_actuals(
             self, tmp_path, monkeypatch):
-        rdate = date.today() - timedelta(days=2)
+        rdate = date.today() - timedelta(days=8)  # would have burned under the old 5-day window
         fc = _forecast_row("HUBG", rdate)
         out, scores = _run_score(tmp_path, monkeypatch, fc,
                                  calendar_reports=[], fallback_surprise=None)
@@ -109,7 +109,7 @@ class TestScoringFallback:
     def test_grace_expired_phantom_date_burns_as_unknown_not_a_guess(
             self, tmp_path, monkeypatch):
         # HUBG shape: calendar artifact date, no real print in any source.
-        rdate = date.today() - timedelta(days=7)
+        rdate = date.today() - timedelta(days=12)
         fc = _forecast_row("HUBG", rdate, eps_call="inline")
         out, scores = _run_score(tmp_path, monkeypatch, fc,
                                  calendar_reports=[], fallback_surprise=None)
@@ -121,7 +121,7 @@ class TestScoringFallback:
         # NB 2026-09-11: single-analyst microcap whose calendar row was
         # gone by scoring time; the consensus captured at log time is the
         # estimate basis the yfinance fallback needs.
-        rdate = date.today() - timedelta(days=6)
+        rdate = date.today() - timedelta(days=11)
         fc = _forecast_row("NB", rdate, eps_call="miss")
         fc["eps_consensus"] = -0.03
         seen = {}
@@ -141,7 +141,7 @@ class TestScoringFallback:
             self, tmp_path, monkeypatch):
         # Rows logged before eps_consensus existed: a still-live calendar
         # row's estimate serves as the basis instead.
-        rdate = date.today() - timedelta(days=6)
+        rdate = date.today() - timedelta(days=11)
         fc = _forecast_row("NB", rdate, eps_call="miss")
         row = Report(symbol="NB", report_date=rdate.isoformat(),
                      timing="unknown", eps_actual=None, eps_forecast=-0.03,
