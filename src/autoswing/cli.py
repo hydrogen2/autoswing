@@ -19,7 +19,8 @@ DATA_COMMANDS = (
     "scan-candidates", "next-earnings", "scan-movers",
     "shadow-mark", "shadow-status", "scan-upcoming",
     "forecast-log", "forecast-score", "forecast-stats",
-    "exit-counterfactuals", "log-skip", "skip-outcomes", "fill-quality",
+    "exit-counterfactuals", "log-skip", "skip-outcomes", "insider-outcomes",
+    "fill-quality",
     "backtest", "lesson-pending", "lesson-log", "lessons", "trim-compare",
     "signal-log", "signal-score", "signal-stats", "signal-ingest",
     "tone-log", "tone-outcomes",
@@ -207,6 +208,13 @@ def _build_parser() -> argparse.ArgumentParser:
     sub.add_parser(
         "skip-outcomes",
         help="research: what skipped candidates did next, by skip category",
+    )
+
+    sub.add_parser(
+        "insider-outcomes",
+        help="research: fwd-15d drift of enriched candidates by Form 4 "
+        "cluster flag and notional bucket (instrument #8; pre-registered "
+        "verdict at n>=100 unique symbol-days, closed to revision)",
     )
 
     bt = sub.add_parser(

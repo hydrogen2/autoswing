@@ -949,3 +949,170 @@ def compare_entry_rule(trades: list[LiveTrade], history: dict,
     out = entry_cf_verdict(rows)
     out["rows"] = rows
     return out
+
+
+# -- insider-buying enrichment outcomes (instrument #8) -------------------------
+#
+# The scanner has carried a measurement-only Form 4 cluster-buying field on
+# every passing candidate since 2026-09-08. This is the pre-registered read:
+# does the cluster flag predict 15-session forward drift?
+#
+# PRE-REGISTERED 2026-10-23, owner-approved 2026-10-27, BEFORE the first
+# read. The bar below is closed to revision; neither direction gets argued
+# post-hoc. "Dropping the single best symbol-day" means the CLUSTER row with
+# the highest fwd-15d — the one row that most flatters the signal. Dropping
+# a non-cluster row could only help the hypothesis, which would make the
+# robustness check decorative.
+
+INSIDER_MIN_N_FOR_VERDICT = 100
+INSIDER_PREMIUM_PP = 2.0
+
+
+def extract_insider_rows(journal_dir: Path) -> dict:
+    """Unique (symbol, day) enrichment rows from scan-candidates journals.
+
+    The first AVAILABLE summary of a day stands (later scans the same day
+    are cache hits of the same measurement). An "unavailable" summary is
+    replaced by a later available one — EDGAR failures are not cached and
+    retry next run — but never the other way around. Symbol-days that never
+    resolved are counted, not dropped: an outage must stay distinguishable
+    from "no insider bought"."""
+    rows: dict[tuple, dict] = {}
+    unresolved: set[tuple] = set()
+    for f in sorted(journal_dir.glob("*.jsonl")):
+        for line in f.read_text().splitlines():
+            if '"data.scan_candidates"' not in line \
+                    or '"insider_buying"' not in line:
+                continue
+            e = json.loads(line)
+            if e.get("event") != "data.scan_candidates":
+                continue
+            day = e["ts"][:10]
+            for sym, summary in (e.get("insider_buying") or {}).items():
+                if not isinstance(summary, dict):
+                    continue
+                key = (sym.upper(), day)
+                if "unavailable" in summary or "cluster" not in summary:
+                    unresolved.add(key)
+                    continue
+                if key in rows:
+                    continue  # the first measurement of the day stands
+                rows[key] = {
+                    "symbol": key[0], "date": day,
+                    "cluster": bool(summary["cluster"]),
+                    "buys": int(summary.get("buys") or 0),
+                    "distinct_insiders": int(
+                        summary.get("distinct_insiders") or 0),
+                    "est_notional_usd": float(
+                        summary.get("est_notional_usd") or 0),
+                }
+    never_resolved = sorted(k for k in unresolved if k not in rows)
+    return {"rows": [rows[k] for k in sorted(rows)],
+            "unavailable": len(never_resolved),
+            "unavailable_symbol_days": [f"{s}-{d}" for s, d in never_resolved]}
+
+
+def _notional_bucket(row: dict) -> str:
+    if not row["buys"]:
+        return "no_buys"
+    nt = row["est_notional_usd"]
+    if nt < 50_000:
+        return "<50k"
+    if nt < 250_000:
+        return "50k-250k"
+    return ">=250k"
+
+
+def score_insider_outcomes(rows: list[dict], history: dict,
+                           today: date | None = None) -> dict:
+    """Fwd-15d return from the scan-day close for each unique symbol-day.
+
+    A row is measured only once 15 FULL sessions have elapsed (16 closes
+    including the base) — stricter than score_skips' >=11 tolerance on
+    purpose: verdict rows must be true 15-session returns, decided here
+    before the first read rather than argued at n=100."""
+    measured, pending, no_prices = [], 0, []
+    for r in rows:
+        df = history.get(r["symbol"])
+        if df is None:
+            no_prices.append(f"{r['symbol']}-{r['date']}")
+            continue
+        d = date.fromisoformat(r["date"])
+        after = [ts for ts in df.index if ts.date() >= d]
+        if not after:
+            pending += 1
+            continue
+        window = df.loc[after[0]:].head(16)
+        if len(window) < 16:
+            pending += 1
+            continue
+        closes = window["Close"].astype(float)
+        fwd = round(100 * (float(closes.iloc[-1]) / float(closes.iloc[0]) - 1), 2)
+        measured.append({**r, "notional_bucket": _notional_bucket(r),
+                         "fwd_15d_pct": fwd})
+
+    def agg(xs: list[float]) -> dict:
+        return {"n": len(xs),
+                "mean_fwd_15d_pct": round(sum(xs) / len(xs), 2) if xs else None}
+
+    by_cluster = {
+        "cluster": agg([m["fwd_15d_pct"] for m in measured if m["cluster"]]),
+        "non_cluster": agg(
+            [m["fwd_15d_pct"] for m in measured if not m["cluster"]]),
+    }
+    buckets: dict[str, list] = {}
+    for m in measured:
+        buckets.setdefault(m["notional_bucket"], []).append(m["fwd_15d_pct"])
+    return {"measured": len(measured), "pending": pending,
+            "price_data_missing": no_prices,
+            "by_cluster": by_cluster,
+            "by_notional_bucket": {k: agg(v) for k, v in sorted(buckets.items())},
+            "preregistered_verdict": insider_outcomes_verdict(measured),
+            "rows": measured}
+
+
+def insider_outcomes_verdict(measured: list[dict]) -> dict:
+    """The pre-registered bar, computed in code so no read can soften it."""
+    cluster = sorted(m["fwd_15d_pct"] for m in measured if m["cluster"])
+    non = [m["fwd_15d_pct"] for m in measured if not m["cluster"]]
+    n = len(measured)
+
+    def mean(xs):
+        return round(sum(xs) / len(xs), 2) if xs else None
+
+    non_mean = mean(non)
+    separation = (round(mean(cluster) - non_mean, 2)
+                  if cluster and non else None)
+    # Drop the single best CLUSTER symbol-day and ask again.
+    survived = (round(mean(cluster[:-1]) - non_mean, 2)
+                if len(cluster) >= 2 and non else None)
+    out = {
+        "rule": ("first read at n>=100 measured unique symbol-days: "
+                 "'cluster_premium' only if cluster-positive mean fwd-15d "
+                 "beats non-cluster by >= 2pp AND the gap still clears 2pp "
+                 "after dropping cluster's single best symbol-day; else "
+                 "'no_cluster_premium' and the enrichment comes out of the "
+                 "scan"),
+        "registered": "2026-10-27",
+        "required_n": INSIDER_MIN_N_FOR_VERDICT,
+        "premium_pp": INSIDER_PREMIUM_PP,
+        "n_measured": n,
+        "cluster_n": len(cluster),
+        "non_cluster_n": len(non),
+        "cluster_mean_fwd_15d_pct": mean(cluster),
+        "non_cluster_mean_fwd_15d_pct": non_mean,
+        "separation_pp": separation,
+        "separation_after_best_drop_pp": survived,
+        "note": ("discussion trigger only until the owner rules; approved "
+                 "2026-10-27 on the 10-23 proposal, closed to revision"),
+    }
+    if n < INSIDER_MIN_N_FOR_VERDICT:
+        out["verdict"] = "pending"
+        out["remaining"] = INSIDER_MIN_N_FOR_VERDICT - n
+    else:
+        out["verdict"] = (
+            "cluster_premium"
+            if separation is not None and separation >= INSIDER_PREMIUM_PP
+            and survived is not None and survived >= INSIDER_PREMIUM_PP
+            else "no_cluster_premium")
+    return out

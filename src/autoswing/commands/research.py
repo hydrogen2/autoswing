@@ -163,6 +163,32 @@ def _dispatch_data(config, journal: Journal, args):
         return {"count": len(lessons),
                 "context": lessons_context(lessons, args.symbol),
                 "lessons": lessons[-20:]}
+    if args.command == "insider-outcomes":
+        from ..config import PROJECT_ROOT
+        from ..data.prices import fetch_history
+        from ..research import extract_insider_rows, score_insider_outcomes
+
+        ext = extract_insider_rows(PROJECT_ROOT / "journal")
+        rows = ext["rows"]
+        if not rows:
+            return {"measured": 0, "pending": 0,
+                    "unavailable": ext["unavailable"],
+                    "note": "no enriched symbol-days in the journal yet"}
+        history = fetch_history(sorted({r["symbol"] for r in rows}),
+                                period="1y")
+        result = score_insider_outcomes(rows, history)
+        result["unavailable"] = ext["unavailable"]
+        result["unavailable_symbol_days"] = ext["unavailable_symbol_days"]
+        v = result["preregistered_verdict"]
+        journal.record("research.insider_outcomes",
+                       measured=result["measured"], pending=result["pending"],
+                       unavailable=ext["unavailable"],
+                       by_cluster=result["by_cluster"],
+                       verdict=v["verdict"],
+                       separation_pp=v["separation_pp"],
+                       separation_after_best_drop_pp=v[
+                           "separation_after_best_drop_pp"])
+        return result
     if args.command == "skip-outcomes":
         from ..config import PROJECT_ROOT
         from ..data.prices import fetch_history
