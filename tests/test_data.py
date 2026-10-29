@@ -714,3 +714,41 @@ class TestScanInsiderWiring:
         )
         assert result["passing"] == 0
         assert fetched == []
+
+    def test_enrichment_budget_skips_the_fetch_not_the_scan(self, monkeypatch):
+        # 2026-10-29: slow EDGAR fetches for ~50 fresh candidates blew the
+        # 180s CLI watchdog and killed the whole scan, four times. Once the
+        # enrichment budget is spent, remaining symbols must come back
+        # "unavailable" while the candidate list itself still ships.
+        import time as _time
+        import autoswing.data.candidates as candidates
+        fetched = []
+        monkeypatch.setattr(
+            candidates, "recent_reporters",
+            lambda days_back, today=None: [make_report(symbol="AA"),
+                                           make_report(symbol="BB"),
+                                           make_report(symbol="CC")])
+        monkeypatch.setattr(candidates, "fetch_history",
+                            lambda syms: {s: object() for s in syms})
+        monkeypatch.setattr(candidates, "reaction_metrics",
+                            lambda sym, df, d, timing: make_reaction(symbol=sym))
+
+        def slow_enrich(sym, today):
+            fetched.append(sym)
+            _time.sleep(0.05)
+            return {"buys": 0}
+
+        result = candidates.scan(
+            {"min_avg_dollar_volume": 5_000_000, "min_price": 5.0},
+            today=date(2026, 10, 29),
+            insider_enrich=slow_enrich,
+            enrich_budget_s=0.01,
+        )
+        assert result["passing"] == 3  # the scan itself survived
+        assert len(fetched) == 1  # budget spent after the first slow fetch
+        assert result["insider_enrichment_skipped"] == 2
+        skipped = [c for c in result["candidates"]
+                   if "unavailable" in c["insider_buying"]]
+        assert len(skipped) == 2
+        for c in skipped:
+            assert "budget" in c["insider_buying"]["unavailable"]

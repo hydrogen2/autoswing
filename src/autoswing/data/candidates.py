@@ -8,6 +8,7 @@ re-checks everything (defense in depth).
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import asdict
 from datetime import date, timedelta
 from pathlib import Path
@@ -158,8 +159,19 @@ def insider_enrichment(symbol: str, today: date,
     return summary
 
 
+# The CLI watchdog kills any command at 180s. Enrichment is measurement-only
+# (floors and rejects never read it), so it must never be why the trading-
+# critical candidate list dies — yet on 2026-10-29, a peak earnings morning,
+# first-scan-of-the-day EDGAR fetches for ~50 fresh passing candidates blew
+# the watchdog four times and took the whole scan down each time. Budget the
+# loop instead: the per-(symbol, day) cache keeps whatever was fetched, so
+# the backlog drains across successive scans while candidates still ship.
+ENRICH_BUDGET_S = 60.0
+
+
 def scan(risk_config: dict, days_back: int = 3, min_move_pct: float = 3.0,
-         today: date | None = None, insider_enrich=None) -> dict:
+         today: date | None = None, insider_enrich=None,
+         enrich_budget_s: float = ENRICH_BUDGET_S) -> dict:
     floors = {
         "min_avg_dollar_volume": float(risk_config["min_avg_dollar_volume"]),
         "min_price": float(risk_config.get("min_price", 5.0)),
@@ -186,7 +198,15 @@ def scan(risk_config: dict, days_back: int = 3, min_move_pct: float = 3.0,
     # Measurement-only field on PASSING candidates (the population whose
     # drift we can later join). Floors and rejects never read it.
     enrich = insider_enrich or insider_enrichment
-    for c in passing:
+    enrich_started = time.monotonic()
+    enrich_skipped = 0
+    for c in passing:  # biggest movers first — they get the budget
+        if time.monotonic() - enrich_started > enrich_budget_s:
+            c["insider_buying"] = {
+                "unavailable": "enrichment time budget exhausted — retry next scan"
+            }
+            enrich_skipped += 1
+            continue
         c["insider_buying"] = enrich(c["symbol"], today or date.today())
     # Surfaced so a shrinking candidate list is attributable to a data outage
     # rather than read as "nothing qualified today".
@@ -194,6 +214,7 @@ def scan(risk_config: dict, days_back: int = 3, min_move_pct: float = 3.0,
     return {
         "scanned": len(candidates),
         "passing": len(passing),
+        "insider_enrichment_skipped": enrich_skipped,
         "price_data_missing": len(no_prices),
         "price_data_missing_symbols": no_prices,
         "candidates": passing,
