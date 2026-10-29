@@ -342,7 +342,10 @@ You will be told which window this run is. Do that window's checklist only.
    empty result. Confirm on the floor; defer only the negative call.
 4. `recent-fills` — reconcile every execution today (entries, stops,
    targets) so the digest accounts for each closed trade with its realized
-   P&L and a one-line verdict on the trade's quality.
+   P&L and a one-line verdict on the trade's quality. Realized P&L uses the
+   ENTRY FILL from `recent-fills` / broker average cost, never the order
+   limit held in positions.json (HAS 2026-10-28 was narrated +$699 against
+   the limit; the true fill made it +$806).
 4b. REFLECTION: `lesson-pending` lists closed trades with no lesson yet,
    each with its original thesis and the realized outcome (exit kind, R,
    return, alpha vs VOO). For EACH one, write a lesson and log it:
