@@ -436,6 +436,25 @@ def _merge_benchmark_entry(existing, entry):
     return list(by_date.values())
 
 
+def _day_changes(existing, entry_date, virtual_equity, bench_close) -> dict:
+    """Day-change vs the previous mark, named so it cannot be confused with
+    the since-inception *_return_pct fields — on 2026-10-30 a -2.2% day was
+    narrated as "+0.11% on the day" from the cumulative number. The previous
+    mark is the last row with an EARLIER date: a same-day rerun replaces
+    today's row and must not anchor the day change to itself."""
+    prev = next((r for r in reversed(existing) if r.get("date") != entry_date), None)
+    out = {}
+    if prev and prev.get("virtual_equity"):
+        out["bot_day_return_pct"] = round(
+            100 * (virtual_equity / prev["virtual_equity"] - 1), 2
+        )
+    if prev and prev.get("benchmark_close") and bench_close:
+        out["benchmark_day_return_pct"] = round(
+            100 * (bench_close / prev["benchmark_close"] - 1), 2
+        )
+    return out
+
+
 def _regime_tags(hist) -> tuple[dict, list[str]]:
     """Regime tags for the daily mark, plus the names of any that could not
     be computed. Joined to trades post-hoc for conditional-performance
@@ -515,6 +534,9 @@ def _benchmark_mark(broker: Broker):
         entry["benchmark_return_pct"] = round(
             100 * (bench_close / first["benchmark_close"] - 1), 2
         )
+    entry.update(
+        _day_changes(existing, entry["date"], status["virtual_equity"], bench_close)
+    )
     series = _merge_benchmark_entry(existing, entry)
     with open(path, "w") as f:
         for row in series:
