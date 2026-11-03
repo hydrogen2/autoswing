@@ -101,8 +101,12 @@ run_check "propose-dry-run" bash -c 'echo "{\"symbol\":\"XOM\",\"action\":\"BUY\
 # trading outage, not a normal rejection. Checked during regular hours only
 # (ET-computed, DST-safe); off-hours rejections are correct behaviour.
 # JSON is parsed, not substring-matched: rules serialize multi-line.
+# Session = NYSE trading day (calendar.py: weekends + holidays, fails closed
+# past coverage) AND 09:30-16:00 ET. The clock-only test fired 7 spurious
+# "blocked during RTH" WARNs on Sunday 2026-11-01 (manager finding 11-02).
 ET_MIN=$((10#$(TZ=America/New_York date +%H) * 60 + 10#$(TZ=America/New_York date +%M)))
-if [ "$ET_MIN" -ge 570 ] && [ "$ET_MIN" -lt 960 ]; then
+IS_TRADING_DAY=$(uv run python -c "from datetime import datetime; from zoneinfo import ZoneInfo; from autoswing.calendar import is_trading_day; print(int(is_trading_day(datetime.now(ZoneInfo(\"America/New_York\")).date())))" 2>/dev/null || echo 0)
+if [ "$IS_TRADING_DAY" = "1" ] && [ "$ET_MIN" -ge 570 ] && [ "$ET_MIN" -lt 960 ]; then
   BLOCKED=$(printf '%s' "$LAST_OUT" | sed -n '/^{/,$p' | python3 -c "
 import json, sys
 try:
