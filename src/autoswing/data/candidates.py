@@ -195,12 +195,16 @@ def scan(risk_config: dict, days_back: int = 3, min_move_pct: float = 3.0,
 
     passing = [c for c in candidates if not c["rejects"]]
     passing.sort(key=lambda c: abs(c["reaction"]["move_pct"]), reverse=True)
-    # Measurement-only field on PASSING candidates (the population whose
-    # drift we can later join). Floors and rejects never read it.
-    enrich = insider_enrich or insider_enrichment
+    # Form 4 enrichment RETIRED from the live scan on 2026-11-04 (owner
+    # ruling on the pre-registered instrument #8 read of 10-30: cluster
+    # buying ran -17.9% fwd-15d vs +4.6% without, 'no_cluster_premium', so
+    # the field comes out). The code path stays for the historical
+    # `insider-outcomes` read and for tests, which pass insider_enrich
+    # explicitly; the default scan makes no EDGAR calls and emits no field.
+    enrich = insider_enrich
     enrich_started = time.monotonic()
     enrich_skipped = 0
-    for c in passing:  # biggest movers first — they get the budget
+    for c in passing if enrich else []:  # biggest movers first — they get the budget
         if time.monotonic() - enrich_started > enrich_budget_s:
             c["insider_buying"] = {
                 "unavailable": "enrichment time budget exhausted — retry next scan"

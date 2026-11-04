@@ -752,3 +752,27 @@ class TestScanInsiderWiring:
         assert len(skipped) == 2
         for c in skipped:
             assert "budget" in c["insider_buying"]["unavailable"]
+
+
+class TestInsiderEnrichmentRetired:
+    def test_default_scan_makes_no_enrichment_call_and_emits_no_field(self, monkeypatch):
+        # Owner ruling 2026-11-04 on instrument #8: the field is out of the
+        # live scan. A regression here would re-add EDGAR round-trips and a
+        # measurement the pre-registered verdict already closed.
+        from datetime import date
+        from autoswing.data import candidates
+        monkeypatch.setattr(candidates, "recent_reporters",
+                            lambda days_back, today=None: [make_report()])
+        monkeypatch.setattr(candidates, "fetch_history",
+                            lambda syms: {"T": object()})
+        monkeypatch.setattr(candidates, "reaction_metrics",
+                            lambda sym, df, d, timing: make_reaction())
+        monkeypatch.setattr(candidates, "insider_enrichment",
+                            lambda *a, **k: (_ for _ in ()).throw(AssertionError("EDGAR called")))
+        result = candidates.scan(
+            {"min_avg_dollar_volume": 5_000_000, "min_price": 5.0},
+            today=date(2026, 11, 4),
+        )
+        assert result["passing"] == 1
+        assert "insider_buying" not in result["candidates"][0]
+        assert result["insider_enrichment_skipped"] == 0
