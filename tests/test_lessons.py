@@ -112,6 +112,39 @@ class TestExtraction:
         # XOM healthcheck approval never becomes a trade; ZZZ adopted is skipped
         assert extract_closed_trades(tmp_path / "journal") == []
 
+    def test_entry_fill_captured_from_bot_evidence(self, tmp_path):
+        # LSCC 2026-11-04: filled 104.67 against a 106.00 limit; outcome
+        # math must use the fill, not the limit (-3.08% real vs -4.29%).
+        write_journal(tmp_path, "2026-11-04",
+                      [approval("LSCC", 106.0, 101.9, 114.2),
+                       buy_fill("LSCC", "2026-11-04", 104.67),
+                       sell_fill("LSCC", "2026-11-04", 101.45),
+                       position_closed("LSCC", "2026-11-04", 106.0, 101.9, 114.2)])
+        [t] = extract_closed_trades(tmp_path / "journal")
+        assert t.entry_fill == 104.67
+        o = outcome(t, None, None)
+        assert o["entry_basis"] == "fill"
+        assert o["entry_price"] == 104.67
+        assert o["return_pct"] == pytest.approx(-3.08)
+
+    def test_entry_without_price_evidence_falls_back_to_limit(self, tmp_path):
+        # A place_bracket_order Filled status proves the fill happened but
+        # carries no price; the trade still counts, basis stays "limit".
+        write_journal(tmp_path, "2026-08-01", [
+            approval("XOM", 100, 95, 110),
+            {"event": "broker.place_bracket_order",
+             "result": {"symbol": "XOM",
+                        "orders": [{"role": "entry", "status": "Filled"}]}},
+        ])
+        write_journal(tmp_path, "2026-08-04",
+                      [sell_fill("XOM", "2026-08-04", 94.9),
+                       position_closed("XOM", "2026-08-01", 100, 95, 110)])
+        [t] = extract_closed_trades(tmp_path / "journal")
+        assert t.entry_fill is None
+        o = outcome(t, None, None)
+        assert o["entry_basis"] == "limit"
+        assert o["return_pct"] == pytest.approx(-5.1)
+
     def test_no_sell_evidence_leaves_exit_none(self, tmp_path):
         write_journal(tmp_path, "2026-08-01",
                       [approval("XOM", 100, 95, 110), buy_fill("XOM", "2026-08-01", 100)])

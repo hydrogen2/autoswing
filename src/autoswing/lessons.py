@@ -40,6 +40,7 @@ class ClosedTrade:
     strategy: str
     exit_price: float | None = None   # from fill evidence, else None
     exit_kind: str = "unknown"        # stop | target | timebox | manual | unknown
+    entry_fill: float | None = None   # from BOT fill evidence, else None
 
     @property
     def id(self) -> str:
@@ -58,6 +59,8 @@ def extract_closed_trades(journal_dir: Path) -> list[ClosedTrade]:
       lesson memory that missed them would learn only from stop-outs.
       Entry meta is rebuilt from the original approved gate.decision.
 
+    Entry price: broker.recent_fills (side BOT, earliest priced day in the
+    hold) — the order limit is only the fallback basis for outcome math.
     Exit price: broker.recent_fills (side SLD, same symbol, same UTC day).
     Missing evidence leaves exit_price=None — the reflection then works
     from the thesis and the exit kind rather than a fabricated number.
@@ -65,7 +68,8 @@ def extract_closed_trades(journal_dir: Path) -> list[ClosedTrade]:
     VOYG 08-06 ran away unfilled) are not trades and are excluded."""
     closes: dict[str, ClosedTrade] = {}
     sells: dict[str, list[float]] = {}   # "SYM-YYYY-MM-DD" -> fill prices
-    buys: set[str] = set()               # "SYM-YYYY-MM-DD" with a BOT fill
+    buys: dict[str, list[float]] = {}    # "SYM-YYYY-MM-DD" -> BOT fill prices
+    #                                      (key present with [] = filled, price unknown)
     kinds: dict[str, str] = {}
     approved: dict[str, dict] = {}       # "SYM-YYYY-MM-DD" -> proposal
     KEYS = ('"manage.position_closed"', '"broker.recent_fills"',
@@ -89,7 +93,7 @@ def extract_closed_trades(journal_dir: Path) -> list[ClosedTrade]:
                 r = e.get("result", {})
                 if any(o.get("role") == "entry" and o.get("status") == "Filled"
                        for o in r.get("orders", [])):
-                    buys.add(f"{r['symbol'].upper()}-{day}")
+                    buys.setdefault(f"{r['symbol'].upper()}-{day}", [])
             elif ev == "manage.position_closed":
                 m = e.get("meta") or {}
                 if not m.get("symbol"):
@@ -113,7 +117,9 @@ def extract_closed_trades(journal_dir: Path) -> list[ClosedTrade]:
                     if fill.get("side") == "SLD" and fill.get("price"):
                         sells.setdefault(key, []).append(float(fill["price"]))
                     elif fill.get("side") == "BOT":
-                        buys.add(key)
+                        prices = buys.setdefault(key, [])
+                        if fill.get("price"):
+                            prices.append(float(fill["price"]))
             elif ev == "manage.review":
                 for p in (e.get("result") or {}).get("positions", []):
                     if not p.get("enforced"):
@@ -145,9 +151,16 @@ def extract_closed_trades(journal_dir: Path) -> list[ClosedTrade]:
 
     out = []
     for t in closes.values():
-        if not any(b.startswith(t.symbol + "-") and t.placed_date <= b[len(t.symbol)+1:] <= t.closed_date
-                   for b in buys):
+        buy_keys = sorted(
+            b for b in buys
+            if b.startswith(t.symbol + "-")
+            and t.placed_date <= b[len(t.symbol)+1:] <= t.closed_date)
+        if not buy_keys:
             continue  # never filled: not a trade
+        for b in buy_keys:  # earliest day with price evidence = the entry fill
+            if buys[b]:
+                t.entry_fill = round(sum(buys[b]) / len(buys[b]), 4)
+                break
         key = f"{t.symbol}-{t.closed_date}"
         prices = sells.get(key)
         if prices:
@@ -171,16 +184,22 @@ def _infer_kind(t: ClosedTrade) -> str:
 
 def outcome(t: ClosedTrade, bench_entry: float | None,
             bench_exit: float | None) -> dict:
-    """Realized numbers for the reflection prompt. R is vs the planned
-    stop distance (the risk the brain chose), alpha vs the benchmark over
-    the same hold. Any leg unavailable -> None, never a guess."""
-    risk = t.entry_limit - t.stop_loss
+    """Realized numbers for the reflection prompt. Entry basis is the
+    actual BOT fill when the journal has it, the order limit only as a
+    fallback (limit-based figures misstated LSCC 2026-11-04 by 1.2pp —
+    the fill was 104.67 vs a 106.00 limit). R is vs the stop distance
+    from the same entry basis, alpha vs the benchmark over the same
+    hold. Any leg unavailable -> None, never a guess."""
+    entry = t.entry_fill if t.entry_fill is not None else t.entry_limit
+    risk = entry - t.stop_loss
     o = {"exit_price": t.exit_price, "exit_kind": t.exit_kind,
+         "entry_price": entry,
+         "entry_basis": "fill" if t.entry_fill is not None else "limit",
          "return_pct": None, "r_multiple": None, "alpha_pct": None}
     if t.exit_price is not None:
-        o["return_pct"] = round(100 * (t.exit_price / t.entry_limit - 1), 2)
+        o["return_pct"] = round(100 * (t.exit_price / entry - 1), 2)
         if risk > 0:
-            o["r_multiple"] = round((t.exit_price - t.entry_limit) / risk, 2)
+            o["r_multiple"] = round((t.exit_price - entry) / risk, 2)
         if bench_entry and bench_exit:
             bench_ret = 100 * (bench_exit / bench_entry - 1)
             o["alpha_pct"] = round(o["return_pct"] - bench_ret, 2)
