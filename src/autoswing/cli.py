@@ -432,8 +432,12 @@ def _arm_watchdog(journal: Journal, command: str) -> None:
         try:
             journal.record("cli.watchdog_timeout", command=command, limit_s=limit)
         finally:
+            # os._exit skips stdio flushing; with stdout captured into a
+            # pipe (fully buffered) the error JSON was silently discarded —
+            # the 2026-11-04 17:48 healthcheck FAIL showed empty output.
             print(json.dumps({"ok": False,
-                              "error": f"watchdog: {command} exceeded {limit}s"}))
+                              "error": f"watchdog: {command} exceeded {limit}s"}),
+                  flush=True)
             os._exit(2)
 
     signal.signal(signal.SIGALRM, _die)

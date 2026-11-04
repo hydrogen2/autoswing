@@ -68,3 +68,29 @@ class TestErrorText:
     def test_never_empty(self):
         for exc in (TimeoutError(), OSError(), RuntimeError(), Exception()):
             assert _error_text(exc)
+
+
+class TestWatchdogDeathIsVisible:
+    """Regression: on 2026-11-04 17:48 the scan-candidates watchdog fired,
+    journaled, and exited 2 — but its {"ok": false} JSON never reached the
+    healthcheck, because os._exit skips stdio flushing and stdout was a
+    fully-buffered pipe. The error must survive the exit."""
+
+    def test_watchdog_json_reaches_a_pipe(self):
+        import json
+        import subprocess
+        import sys
+
+        code = (
+            "import os\n"
+            "os.environ['AUTOSWING_CMD_TIMEOUT'] = '1'\n"
+            "from unittest.mock import MagicMock\n"
+            "from autoswing.cli import _arm_watchdog\n"
+            "_arm_watchdog(MagicMock(), 'sleepy')\n"
+            "import time; time.sleep(10)\n"
+        )
+        p = subprocess.run([sys.executable, "-c", code],
+                           capture_output=True, text=True, timeout=30)
+        assert p.returncode == 2
+        out = json.loads(p.stdout.strip().splitlines()[-1])
+        assert out == {"ok": False, "error": "watchdog: sleepy exceeded 1s"}
