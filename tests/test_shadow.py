@@ -111,6 +111,60 @@ class TestMarking:
         assert mark_position(pos(), df, df.index[0].date(), 15) is None
 
 
+class TestPreEarningsExit:
+    """2026-11-05 HHH regression: a shadow position whose print fell inside
+    the hold carried the earnings gap because the mark had no pre-earnings
+    exit. Positions now store the gate-verified date and exit like the live
+    book; legacy rows (empty field) keep the old behavior."""
+
+    QUIET = [(100, 104, 98, 101)] * 4  # 08-10 .. 08-13, no level touched
+
+    def test_fires_at_buffer_before_the_print(self):
+        # Earnings Fri 08-14; buffer 2 calendar days => exit Wed 08-12 close.
+        df = make_df(self.QUIET)
+        e = mark_position(pos(next_earnings="2026-08-14"), df,
+                          date(2026, 8, 13), 15)
+        assert e["reason"] == "pre_earnings"
+        assert e["closed"] == "2026-08-12"
+        assert e["exit_price"] == 101.0
+
+    def test_stop_on_the_same_bar_wins(self):
+        rows = [(100, 104, 98, 101), (100, 104, 98, 101), (100, 102, 94, 96)]
+        e = mark_position(pos(next_earnings="2026-08-14"), make_df(rows),
+                          date(2026, 8, 12), 15)
+        assert e["reason"] == "stop"
+
+    def test_legacy_position_without_field_is_untouched(self):
+        # HHH/CRL shape: opened before the field existed. No retroactive
+        # close — stop/target/timebox only.
+        df = make_df(self.QUIET)
+        assert mark_position(pos(), df, date(2026, 8, 13), 15) is None
+
+    def test_verified_none_never_fires(self):
+        df = make_df(self.QUIET)
+        assert mark_position(pos(next_earnings="none"), df,
+                             date(2026, 8, 13), 15) is None
+
+    def test_print_behind_the_entry_never_fires(self):
+        # 2026-07-21 MMM lesson: a stale feed pinning next_earnings to the
+        # just-reported date must not flatten a fresh position.
+        df = make_df(self.QUIET)
+        assert mark_position(pos(next_earnings="2026-08-10"), df,
+                             date(2026, 8, 13), 15) is None
+
+    def test_unparseable_date_skips(self):
+        df = make_df(self.QUIET)
+        assert mark_position(pos(next_earnings="early November"), df,
+                             date(2026, 8, 13), 15) is None
+
+    def test_wider_buffer_fires_earlier(self):
+        df = make_df(self.QUIET)
+        e = mark_position(pos(next_earnings="2026-08-14"), df,
+                          date(2026, 8, 13), 15, earnings_buffer_days=3)
+        assert e["reason"] == "pre_earnings"
+        assert e["closed"] == "2026-08-11"
+
+
 class TestLedgerStats:
     def test_stats(self, tmp_path):
         p = tmp_path / "ledger.jsonl"

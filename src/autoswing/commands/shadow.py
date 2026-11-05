@@ -66,6 +66,7 @@ def _shadow_propose(broker: Broker, args):
                 stop_loss=proposal.stop_loss,
                 take_profit=proposal.take_profit,
                 rationale=proposal.rationale,
+                next_earnings=str(proposal.next_earnings_date or ""),
             )
             save_book(pos_path, book)
             opened = True
@@ -96,6 +97,7 @@ def _shadow_mark(config, journal: Journal):
     from ..shadow import load_book, mark_position, save_book
 
     max_hold = int(config.strategy.get("max_hold_days", 15))
+    buffer_days = int(config.strategy.get("exit_before_earnings_days", 2))
     bench = config.strategy.get("benchmark_symbol", "VOO")
     out = {}
     for label, wide in (("v2", False), ("wide", True)):
@@ -112,7 +114,8 @@ def _shadow_mark(config, journal: Journal):
             df = history.get(sym)
             if df is None:
                 continue  # no data today; try again tomorrow
-            event = mark_position(book[sym], df, date.today(), max_hold)
+            event = mark_position(book[sym], df, date.today(), max_hold,
+                                  earnings_buffer_days=buffer_days)
             if event:
                 event["alpha_pct"] = _alpha(event, bench_df)
                 ledger_path.parent.mkdir(parents=True, exist_ok=True)

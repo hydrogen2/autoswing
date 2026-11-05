@@ -14,8 +14,11 @@ Two books share this machinery:
   size decoupled from the account's capital constraints.
 
 Approved proposals open a virtual position; a daily mark closes them
-against real subsequent prices using the same bracket + time-box rules the
-live book uses.
+against real subsequent prices using the same bracket + time-box +
+pre-earnings-exit rules the live book uses. (Pre-earnings exits apply to
+positions opened from 2026-11-05 on, when next_earnings started being
+stored; the HHH gap — a shadow position carrying its print because no such
+exit existed — is why.)
 
 Fill model (documented conservatism): marks use daily bars from the session
 of entry onward. When a bar's low breaches the stop AND its high reaches the
@@ -94,6 +97,11 @@ class ShadowPosition:
     stop_loss: float
     take_profit: float
     rationale: str = ""
+    # Gate-verified next earnings date at proposal time ("none" = no upcoming
+    # report). Empty = position predates the field (2026-11-05, HHH gap):
+    # those rows keep stop/target/timebox-only marking — a retroactive
+    # pre-earnings close would rewrite ledger history.
+    next_earnings: str = ""
 
 
 def load_book(path: Path) -> dict[str, ShadowPosition]:
@@ -116,6 +124,7 @@ def mark_position(
     today: date,
     max_hold_days: int,
     entry_at_open: bool = False,
+    earnings_buffer_days: int = 2,
 ) -> dict | None:
     """Returns a close event dict, or None if the position stays open.
 
@@ -147,9 +156,36 @@ def mark_position(
             return _close(pos, d, pos.stop_loss, "stop")
         if float(bar["High"]) >= pos.take_profit:
             return _close(pos, d, pos.take_profit, "target")
+        if _earnings_within_buffer(pos.next_earnings, opened, d,
+                                   earnings_buffer_days):
+            return _close(pos, d, float(bar["Close"]), "pre_earnings")
         if trading_days_between(opened, d) >= max_hold_days:
             return _close(pos, d, float(bar["Close"]), "timebox")
     return None
+
+
+def _earnings_within_buffer(
+    next_earnings: str, opened: date, d: date, buffer_days: int,
+) -> bool:
+    """True when a verified upcoming print is within buffer_days of bar d.
+
+    Mirrors manage.position_action: calendar-day buffer, and a print dated
+    on/before the entry or already behind the bar never fires (the 2026-07-21
+    MMM stale-feed lesson). Two deliberate differences from the live rule:
+    empty/unknown SKIPS instead of forcing an exit, because the mark is a
+    bar replay, not a live exposure decision — the gate verified the date at
+    entry, and empty means the position predates the field; and "none" is a
+    verified no-upcoming-report, same as live.
+    """
+    if not next_earnings or next_earnings in ("none", "unknown"):
+        return False
+    try:
+        earnings = date.fromisoformat(next_earnings)
+    except ValueError:
+        return False
+    if earnings <= opened or earnings < d:
+        return False
+    return (earnings - d).days <= buffer_days
 
 
 def _close(pos: ShadowPosition, on: date, price: float, reason: str) -> dict:
