@@ -14,7 +14,7 @@ from autoswing.forecast import (
 
 def payload(**overrides):
     base = dict(
-        symbol="XOM", report_date="2026-08-10", timing="amc", tier="deep",
+        symbol="XOM", report_date="2026-08-10", timing="amc", tier="quick",
         eps_call="beat", reaction_call="up", confidence=0.7,
         reasoning="peers CVX and SHEL both beat on refining margins",
     )
@@ -200,12 +200,12 @@ class TestRetiredReactionLeg:
     def test_quick_still_accepts_an_explicit_reaction(self):
         assert validate_forecast(self.payload(reaction_call="up")) == []
 
-    def test_deep_may_omit_reaction(self):
-        # Retired 2026-08-27: a deep forecast without a reaction call is valid.
-        assert validate_forecast(self.payload(tier="deep")) == []
+    def test_deep_tier_itself_is_retired(self):
+        # 2026-08-27 retired deep's reaction leg; 2026-11-05 retired the deep
+        # tier outright (no_depth_premium at n=100). Only the tier error fires.
+        errs = validate_forecast(self.payload(tier="deep"))
+        assert errs and all("retired" in e for e in errs)
 
-    def test_deep_still_accepts_an_explicit_reaction(self):
-        assert validate_forecast(self.payload(tier="deep", reaction_call="up")) == []
 
     def test_deep_rejects_a_bad_reaction_value(self):
         assert validate_forecast(self.payload(tier="deep", reaction_call="sideways"))

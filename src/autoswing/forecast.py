@@ -25,6 +25,12 @@ from pathlib import Path
 EPS_CALLS = ("beat", "miss", "inline")
 REACTION_CALLS = ("up", "down")
 TIERS = ("deep", "quick")
+# Deep tier RETIRED 2026-11-05 (owner ruling on the pre-registered depth
+# verdict, landed 11-04 at deep n=100: deep 69.0% vs quick 68.5% EPS hit,
+# +0.5pp against a +3pp bar -> "no_depth_premium"). Historical deep rows
+# stay in TIERS so scoring and stats keep reading them; new deep forecasts
+# are refused at log time.
+ACTIVE_TIERS = ("quick",)
 
 EPS_INLINE_BAND_PCT = 2.0     # |surprise| <= 2% counts as inline
 REACTION_FLAT_BAND_PCT = 1.0  # |move| < 1% counts as flat
@@ -70,6 +76,8 @@ def validate_forecast(payload: dict) -> list[str]:
         errs.append(f"reaction_call must be one of {REACTION_CALLS} or omitted (leg retired both tiers)")
     if payload.get("tier") not in TIERS:
         errs.append(f"tier must be one of {TIERS}")
+    elif payload.get("tier") not in ACTIVE_TIERS:
+        errs.append("deep tier retired 2026-11-05 (no_depth_premium at n=100): log quick only")
     try:
         c = float(payload.get("confidence", -1))
         if not (0.5 <= c <= 1.0):

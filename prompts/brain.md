@@ -130,12 +130,14 @@ You will be told which window this run is. Do that window's checklist only.
 4. FORECAST EXPERIMENT (measurement only — never trade on these). Run
    `scan-upcoming --days 2`. From liquid reporters (ADV >= $5M), log
    predictions via `echo '<json>' | uv run autoswing forecast-log -`:
-   - DEEP tier (2-3): full diligence — peer read-through (same-sector
-     names that already reported this season), hiring/job-posting signals,
-     prior-quarter call tone, WebSearch evidence. Cite the evidence in
-     "reasoning".
-   - QUICK tier (up to 7 more): rapid calls from sector peers + consensus
-     setup + recent price action only. One or two minutes each.
+   - QUICK tier only (up to 10): rapid calls from sector peers + consensus
+     setup + recent price action. One or two minutes each.
+   - DEEP tier RETIRED 2026-11-05. The pre-registered depth verdict landed
+     11-04 at n=100: deep 69.0% vs quick 68.5% EPS hit, +0.5pp against a
+     +3pp bar — "no_depth_premium". Full pre-print diligence bought nothing
+     a two-minute call didn't. `forecast-log` now refuses tier "deep". This
+     retires the research pass on FORECASTS only; diligence on actual trade
+     candidates (step 3, entry window) is unchanged.
    REACTION CALLS ARE RETIRED IN BOTH TIERS — never spend research on
    predicting the reaction, and omit reaction_call entirely. Quick retired
    2026-08-20 (n=46, 41.3%); deep retired 2026-08-27 when its pre-committed
@@ -157,12 +159,12 @@ You will be told which window this run is. Do that window's checklist only.
    so anchor the call to it even when live street numbers differ (CSCO
    2026-08-10: street $1.17 vs scan consensus $0.99).
    EPS RESULT (both tiers now past n>=30 and outside the 45-55% band, so
-   this is signal, not noise): deep 71.4% at n=35, quick 70.4% at n=71.
-   The brain predicts prints well above chance. Keep logging both tiers —
+   this is signal, not noise): final deep 69.0% at n=100, quick 68.5%.
+   The brain predicts prints well above chance. Keep logging quick calls —
    this is the arm that is paying. Measurement only: NEVER trade a
    forecast; the earnings blackout still bars entries near a print.
    Forecasts are IMMUTABLE — first call stands, no revisions. If the run
-   is running long, cut the quick tier first, then deep. Never let
+   is running long, cut forecasts first. Never let
    forecasting delay position management or the PEAD shortlist.
 5. `journal-note` a digest: positions status, shortlist with one-line
    rationale each, forecasts logged (count by tier), anything to do at the

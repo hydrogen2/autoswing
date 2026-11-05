@@ -91,3 +91,12 @@ def test_compute_stats_carries_verdict():
     st = compute_stats([], _deep(10, 7) + _quick(10, 7))
     assert st["depth_verdict"]["verdict"] == "pending"
     assert st["depth_verdict"]["registered"] == "2026-10-19"
+
+
+def test_new_deep_forecasts_refused_quick_still_logs():
+    # Owner retired the deep tier 2026-11-05 on the landed verdict.
+    from autoswing.forecast import validate_forecast
+    base = dict(symbol="XOM", report_date="2099-01-01", timing="amc",
+                eps_call="beat", confidence=0.6, reasoning="peers beat")
+    assert any("retired" in e for e in validate_forecast({**base, "tier": "deep"}))
+    assert not any("retired" in e for e in validate_forecast({**base, "tier": "quick"}))

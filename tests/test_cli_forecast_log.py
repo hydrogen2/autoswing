@@ -50,9 +50,10 @@ class TestQuickTierOmitsReactionCall:
                    {**QUICK, "symbol": "box", "reaction_call": None})
         assert out["logged"] == "BOX-2099-01-15"
 
-    def test_deep_tier_reaction_call_preserved(self, tmp_path, monkeypatch):
+    def test_explicit_reaction_call_preserved(self, tmp_path, monkeypatch):
+        # (was a deep-tier case; deep retired 2026-11-05, property is tier-free)
         _log(tmp_path, monkeypatch,
-             {**QUICK, "symbol": "dks", "tier": "deep", "reaction_call": "up"})
+             {**QUICK, "symbol": "dks", "reaction_call": "up"})
         rows = [json.loads(l) for l in
                 (tmp_path / "forecasts.jsonl").read_text().splitlines()]
         assert rows[0]["reaction_call"] == "up"

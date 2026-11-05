@@ -90,10 +90,11 @@ and the whole day's report was lost. Therefore:
    unpaired rows are information, never part of the verdict;
    (c) forecast experiment — read state/forecast/
    (forecasts.jsonl + scores.jsonl) and report n scored, hit rates and
-   calibration BY TIER (deep vs quick); flag when a tier crosses n>=30
-   with a hit rate outside 45-55% — that is signal either direction.
-   Quote `forecast-stats` -> depth_verdict verbatim (verdict, deep_n/100,
-   deep vs quick hit %). Approved by the owner 10-19 on your 10-16
+   calibration BY TIER; flag when a tier crosses n>=30 with a hit rate
+   outside 45-55% — that is signal either direction. The depth verdict
+   LANDED 11-04: "no_depth_premium" (deep 69.0% vs quick 68.5% at n=100);
+   the owner retired the deep tier 11-05, quick-only from here. Quote the
+   landed verdict once a week at most; deep's n is frozen at 100. Approved by the owner 10-19 on your 10-16
    proposal; the rule (first 100 deep EPS scores, quick comparator frozen
    at the 100th deep score's timestamp, premium = >= 3pp) is CLOSED to
    revision. Discussion trigger only: "no_depth_premium" opens the question
