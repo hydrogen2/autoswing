@@ -154,7 +154,9 @@ def _alpha(event: dict, bench_df) -> float | None:
 
 
 def _shadow_status():
-    from ..shadow import ledger_stats, load_book, load_ledger, v2_verdict
+    from ..shadow import (
+        ledger_stats, load_book, load_ledger, v2_oos_verdict, v2_verdict,
+    )
 
     out = {}
     for label, wide in (("v2", False), ("wide", True)):
@@ -167,7 +169,11 @@ def _shadow_status():
         if label == "v2":
             # Pre-registered 2026-09-29; the report quotes this, it does not
             # recompute or reinterpret it.
-            out[label]["preregistered_verdict"] = v2_verdict(load_ledger(ledger_path))
+            rows = load_ledger(ledger_path)
+            out[label]["preregistered_verdict"] = v2_verdict(rows)
+            # Post-#25 out-of-sample period (owner kept the book 2026-11-04;
+            # registered 2026-11-06). Quoted, never reinterpreted.
+            out[label]["oos_preregistered_verdict"] = v2_oos_verdict(rows)
         if label == "wide":
             # Pre-registered 2026-10-14 (owner-approved); same rule: quoted,
             # never reinterpreted.

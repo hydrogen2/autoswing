@@ -340,6 +340,94 @@ def v2_verdict(rows: list[dict]) -> dict:
     return out
 
 
+# --- post-#25 out-of-sample pre-registration (journaled 2026-11-06) ----------
+# The owner kept the v2 book running past the first-25 verdict (ruling
+# 2026-11-04). Trades after close #25 are a NEW out-of-sample period with its
+# own pre-registered check -- never a revision of the first 25, whose verdict
+# stays frozen above. Registered at the 2026-11-06 preclose, before close #3
+# of the period accrued (the period opened with CRL -330.54 / HHH +219.09):
+#   - sample: the first 25 closes AFTER the frozen first-25 sample, in ledger
+#     order (equivalently, closes dated after 2026-11-02, the #25 close);
+#   - same criteria as the first sample: bin if avg alpha < 0 or total P&L
+#     < 0 at 25; promotion discussion only if both criteria still hold with
+#     each one's best trade removed (the stricter per-criterion reading);
+#   - the exit model is the shadow-mark CODE PATH only: stop/target on bar
+#     touch, 15-trading-day timebox at bar close, and the pre-earnings exit
+#     2 sessions before the gate-verified next_earnings (582c0c4) --
+#     next_earnings is required on every new v2 row at proposal time; no hand
+#     scoring, no retroactive rewrites.
+# Retiring the book remains the owner's decision alone. CLOSED to revision
+# once the owner approves; changing any of this is a dated, deliberate edit.
+V2_OOS_VERDICT_N = 25
+V2_OOS_VERDICT_REGISTERED = "2026-11-06"
+V2_OOS_VERDICT_RULE = (
+    "out-of-sample period after the first-25 verdict: the first 25 closes "
+    "following the frozen sample (ledger order; dated after 2026-11-02); "
+    "bin if avg alpha < 0 or total P&L < 0; otherwise a promotion "
+    "discussion only if both criteria still hold with each one's best "
+    "trade removed; exits are the shadow-mark code path only "
+    "(stop/target/15d timebox/pre-earnings via required next_earnings)")
+
+
+def v2_oos_verdict(rows: list[dict]) -> dict:
+    """The post-#25 out-of-sample pre-registered verdict. Deliberately NOT
+    refactored into v2_verdict: each registration is its own frozen artifact,
+    and sharing code would let an edit to one quietly move the other."""
+    period = rows[V2_VERDICT_N:]
+    sample = period[:V2_OOS_VERDICT_N]
+    n = len(sample)
+    total, avg, alpha_n = _pnl_alpha(sample)
+    out = {
+        "rule": V2_OOS_VERDICT_RULE,
+        "registered": V2_OOS_VERDICT_REGISTERED,
+        "period_starts_after_close": V2_VERDICT_N,
+        "required_n": V2_OOS_VERDICT_N,
+        "sample_n": n,
+        "period_closed": len(period),
+        "closed_total": len(rows),
+        "total_pnl": total,
+        "avg_alpha_pct": avg,
+        "alpha_n": alpha_n,
+        "alpha_incomplete": alpha_n < n,
+    }
+    if n < V2_OOS_VERDICT_N:
+        out.update(verdict="pending", remaining=V2_OOS_VERDICT_N - n,
+                   note="progress, not a result: no verdict before "
+                        f"{V2_OOS_VERDICT_N} closed in the new period")
+        return out
+    if avg is None:
+        out.update(verdict="undeterminable",
+                   reasons=["no alpha on any row in the sample"])
+        return out
+
+    reasons = []
+    if avg < 0:
+        reasons.append(f"avg alpha {avg}% < 0")
+    if total < 0:
+        reasons.append(f"total P&L {total} < 0")
+    if reasons:
+        out.update(verdict="bin", reasons=reasons)
+        return out
+
+    pnl_ex_best, _, _ = _pnl_alpha(_without_best(sample, lambda r: r["pnl"]))
+    alpha_rows = [r for r in sample if isinstance(r.get("alpha_pct"), (int, float))]
+    _, alpha_ex_best, _ = _pnl_alpha(
+        _without_best(alpha_rows, lambda r: r["alpha_pct"]))
+    out.update(total_pnl_ex_best=pnl_ex_best,
+               avg_alpha_pct_ex_best=alpha_ex_best)
+    fragile = []
+    if pnl_ex_best < 0:
+        fragile.append(f"total P&L without best trade {pnl_ex_best} < 0")
+    if alpha_ex_best is None or alpha_ex_best < 0:
+        fragile.append(f"avg alpha without best trade {alpha_ex_best} < 0")
+    if fragile:
+        out.update(verdict="no_promotion_rests_on_one_trade", reasons=fragile)
+    else:
+        out.update(verdict="promotion_discussion",
+                   reasons=["both criteria hold with each best trade removed"])
+    return out
+
+
 # --- verdict alert (owner ruling 2026-09-29) ---------------------------------
 # "Alert me before dropping it, I may want to keep it longer." Nothing in the
 # system stops the v2 book on its own -- the verdict only reports -- and that
