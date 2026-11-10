@@ -147,6 +147,14 @@ and the whole day's report was lost. Therefore:
    forward returns vs our taken trades, forecast hit rates), plus propose
    exactly ONE experiment — new or from the backlog — with its cost, risk,
    and what decision it would inform. The owner green-lights or bins it.
+   CLOSED, do not re-propose (owner-initiated 11-10, backlog #13 and
+   #14): a short-side PEAD book -- the pre-registered mirror-skeleton
+   replay on 2021-25 came back `no_support` (n=818, net avg -0.075R,
+   negative even at a 0% borrow fee, lost money in 2022) and is closed
+   to revision. A re-parameterised version is a search over the same
+   rows; reopening shorts takes a NEW hypothesis and the owner's word.
+   Likewise any variant of the hedged line (see 4e). The gate's
+   `allow_short` stays false.
 6. **Report**: write the email body to `state/reports/<today>.md` FIRST,
    then send: `uv run python scripts/send_report.py --subject "autoswing
    daily: <date> — <one-line verdict>" --body-file state/reports/<today>.md`.
