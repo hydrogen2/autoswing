@@ -83,6 +83,8 @@ def _dispatch_data(config, journal: Journal, args):
         return comparison
     if args.command == "backtest-confirm":
         return _backtest_confirm(config, journal, args)
+    if args.command == "backtest-short":
+        return _backtest_short(config, journal, args)
     if args.command == "entry-counterfactual":
         return _entry_counterfactual(journal)
     if args.command == "fill-quality":
@@ -1247,6 +1249,83 @@ def _entry_counterfactual(journal: Journal):
                    all_scorable=result["all_scorable"],
                    unscorable=len(result["unscorable"]))
     return result
+
+
+def _t_stat(rs: list[float]):
+    if len(rs) < 2:
+        return None
+    m = sum(rs) / len(rs)
+    var = sum((r - m) ** 2 for r in rs) / (len(rs) - 1)
+    return round(m / (var / len(rs)) ** 0.5, 2) if var else None
+
+
+def _backtest_short(config, journal: Journal, args):
+    """Short-side mirror of the skeleton and its pre-registered verdict.
+    The long skeleton on the same range rides along for comparison only."""
+    from datetime import date
+
+    from ..backtest import (
+        SHORT_BORROW_ANNUAL_PCT, aggregate, aggregate_by_year, net_of_borrow,
+        run_backtest, short_verdict,
+    )
+    from ..config import PROJECT_ROOT
+
+    start, end = date.fromisoformat(args.start), date.fromisoformat(args.end)
+    root = PROJECT_ROOT / "state" / "backtest"
+    seen: set[str] = set()
+
+    def progress(day, n_trades):
+        month = day.strftime("%Y-%m")
+        if month not in seen:        # stderr: stdout stays one JSON document
+            seen.add(month)
+            print(f"[backtest-short] {month}: {n_trades} trades so far",
+                  file=sys.stderr, flush=True)
+
+    short = run_backtest(start, end, config.risk, root, {"side": "short"},
+                         progress=progress)
+    verdict = short_verdict(short)
+    long_ = run_backtest(start, end, config.risk, root)
+
+    keys = ("n", "hit_rate", "avg_r", "total_r", "avg_days_held")
+
+    def at_fee(pct):
+        net = net_of_borrow(short["trades"], pct)
+        a = aggregate(net)
+        return {**{k: a.get(k) for k in keys},
+                "t_stat_avg_r": _t_stat([t["r_multiple"] for t in net]),
+                "total_r_by_year": {y: v["total_r"] for y, v in
+                                    aggregate_by_year(net).items()}}
+
+    # Only the registered fee is judged; 0% and 25% bracket it for reading.
+    sensitivity = {f"{pct:g}pct_per_year": at_fee(pct)
+                   for pct in (0.0, SHORT_BORROW_ANNUAL_PCT, 25.0)}
+    long_summary = {
+        **{k: long_["overall"].get(k) for k in keys},
+        "t_stat_avg_r": _t_stat([t["r_multiple"] for t in long_["trades"]]),
+        "total_r_by_year": {y: v["total_r"]
+                            for y, v in long_["by_year"].items()},
+    }
+    out = root / f"short-{args.start}-{args.end}.json"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps({"verdict": verdict, "short": short,
+                               "long_skeleton": long_}, indent=1))
+    journal.record("research.backtest_short", range=[args.start, args.end],
+                   verdict=verdict, short_overall=short["overall"],
+                   short_funnel=short["funnel"],
+                   long_overall=long_["overall"])
+    return {
+        "verdict": verdict,
+        "short_exit_reasons": short["overall"].get("exit_reasons"),
+        "short_by_borrow_fee": sensitivity,
+        "long_skeleton_same_range": long_summary,
+        "funnel": {"short": short["funnel"], "long": long_["funnel"]},
+        "note": "only the short skeleton net of the registered fee is "
+                "judged; the fee sensitivity and the long skeleton are "
+                "descriptive. A pass is a case for the OWNER to consider a "
+                "zero-capital short SHADOW book -- never a live short, "
+                "never a gate change.",
+        "results_file": str(out),
+    }
 
 
 def _backtest_confirm(config, journal: Journal, args):

@@ -118,8 +118,20 @@ and the whole day's report was lost. Therefore:
    is scored against owning the same stock. No verdict before 40 closed
    cycles. The brain runs the book on Wednesdays only; on other days just
    carry the line.
-   Keep raw, strategy-only, shadow, forecast, and wheel lines clearly
-   separated; never blend them.
+   (e) hedged line — quote `shadow-status` -> hedged_book.forward as-is on
+   ONE line: n_days, through, unhedged vs hedged return_pct, ann_vol_pct,
+   max_drawdown_pct, and the benchmark_down_days averages. Registered by
+   the owner 11-10: a fixed 0.5 of equity short VOO, NEVER re-fit. Do not
+   propose a different ratio, hedge instrument, or window, and never quote
+   the in_sample block as evidence — the ratio was read from it. This is
+   a measurement, not a book: no orders exist, nothing follows from it
+   automatically, there is no pass bar, and the owner reads it at the
+   100-trade verdict. Under 20 forward days, give the numbers and say "too
+   early to read" instead of characterizing them. If the block says ERROR,
+   or `through` lags the last trading day, that is a defect to triage
+   (state/benchmark.jsonl), not a quiet day.
+   Keep raw, strategy-only, shadow, forecast, wheel, and hedged lines
+   clearly separated; never blend them.
 4b. **Gate-rejection audit**: count today's gate.decision rejections BY RULE
    and compare against the last few days. A rising share of portfolio-level
    rejections (max_gross_exposure, max_open_positions, kill_switch,

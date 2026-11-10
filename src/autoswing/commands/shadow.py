@@ -184,4 +184,13 @@ def _shadow_status():
             live = {c.id: c for c in extract_closed_trades(PROJECT_ROOT / "journal")}
             out[label]["preregistered_verdict"] = wide_verdict(
                 load_ledger(ledger_path), live)
+    # Hedged-book line (registered 2026-11-10): the live book's daily returns
+    # with a fixed half-of-equity index short. A measurement riding on this
+    # command because it is local-only and already read nightly; it is not a
+    # book and nothing acts on it.
+    from ..config import PROJECT_ROOT
+    from ..hedge import hedged_book_safe
+
+    out["hedged_book"] = hedged_book_safe(
+        PROJECT_ROOT / "state" / "benchmark.jsonl")
     return out

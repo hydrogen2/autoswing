@@ -26,7 +26,7 @@ DATA_COMMANDS = (
     "tone-log", "tone-outcomes",
     "wheel-screen", "wheel-log", "wheel-advance", "wheel-score",
     "wheel-expire", "wheel-cover",
-    "entry-counterfactual", "backtest-confirm",
+    "entry-counterfactual", "backtest-confirm", "backtest-short",
 )
 
 
@@ -350,6 +350,18 @@ def _build_parser() -> argparse.ArgumentParser:
                     help="which variant's pre-registered verdict applies to "
                     "this range (confirm: 2023-25; delay: 2021-22)")
 
+    bs = sub.add_parser(
+        "backtest-short",
+        help="research: the MIRROR of the skeleton on earnings misses "
+        "(short the open after D+1, stop at the reaction-day high, 2R, "
+        "15d), net of an assumed borrow fee, with its PRE-REGISTERED "
+        "verdict (2021-01-01..2025-12-31 only). Measurement only: the "
+        "gate forbids shorts and nothing here changes that. Read-only "
+        "apart from its own results file and the price cache.",
+    )
+    bs.add_argument("--start", required=True, help="YYYY-MM-DD")
+    bs.add_argument("--end", required=True, help="YYYY-MM-DD")
+
     sub.add_parser(
         "entry-counterfactual",
         help="replay the live PEAD trades under the mechanical completed-"
@@ -419,7 +431,7 @@ def _arm_watchdog(journal: Journal, command: str) -> None:
     # per trading day + price cohorts); wheel-screen makes ~5 network calls
     # per symbol across a ~35-name universe. Everything else keeps the tight
     # wall, and neither exception touches the broker.
-    if command in ("backtest", "backtest-confirm"):
+    if command in ("backtest", "backtest-confirm", "backtest-short"):
         default = "3600"
     elif command in ("wheel-screen", "wheel-cover", "wheel-score",
                      "entry-counterfactual"):
