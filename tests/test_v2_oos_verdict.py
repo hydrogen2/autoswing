@@ -86,3 +86,87 @@ def test_same_criteria_one_outlier_cannot_carry_the_period():
 def test_missing_alpha_is_never_read_as_passing():
     oos = [{"pnl": 50, "closed": "2026-11-10"}] * V2_OOS_VERDICT_N
     assert v2_oos_verdict(FIRST25 + oos)["verdict"] == "undeterminable"
+
+
+# --- owner alert for the OOS verdict (ratified 2026-11-10) -------------------
+# "Alert me before dropping it" covers every verdict on the book, not just
+# the first. The first-25 alert was sent 2026-11-02; these pin that its
+# marker can never silence the out-of-sample one.
+
+import importlib.util
+import json
+from pathlib import Path
+
+from autoswing.shadow import oos_verdict_alert
+
+OOS_BIN = FIRST25 + [row(-40, -1.0)] * V2_OOS_VERDICT_N
+
+
+def test_oos_alert_silent_while_pending():
+    assert oos_verdict_alert(v2_oos_verdict(FIRST25 + [row(-40, -1.0)] * 2),
+                             None) is None
+
+
+def test_oos_alert_fires_once_and_says_nothing_was_stopped():
+    v = v2_oos_verdict(OOS_BIN)
+    body = oos_verdict_alert(v, None)
+    assert "OUT-OF-SAMPLE verdict = BIN" in body
+    assert "NOTHING HAS BEEN STOPPED" in body
+    assert "Closes #26-#50" in body
+    assert oos_verdict_alert(v, {"verdict": "bin"}) is None
+
+
+def test_oos_alert_fires_again_if_the_verdict_changes():
+    v = v2_oos_verdict(FIRST25 + [row(40, 0.8)] * V2_OOS_VERDICT_N)
+    assert v["verdict"] == "promotion_discussion"
+    body = oos_verdict_alert(v, {"verdict": "bin"})
+    assert body is not None and "Nothing is" in body
+
+
+def _alert_script(tmp_path, monkeypatch, rows, send_rc=0):
+    path = Path(__file__).resolve().parents[1] / "scripts" / "v2_verdict_alert.py"
+    spec = importlib.util.spec_from_file_location("v2_verdict_alert_t", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    shadow = tmp_path / "state" / "shadow"
+    shadow.mkdir(parents=True)
+    (tmp_path / "state" / "reports").mkdir()
+    (shadow / "ledger.jsonl").write_text(
+        "".join(json.dumps({"event": "shadow.close", **r}) + "\n" for r in rows))
+    sent = []
+    monkeypatch.setattr(mod, "REPO", tmp_path)
+    monkeypatch.setattr(mod, "SHADOW", shadow)
+    monkeypatch.setattr(mod, "CHECKS", tuple(
+        (label, vf, af, shadow / marker.name, suffix, tag)
+        for label, vf, af, marker, suffix, tag in mod.CHECKS))
+    monkeypatch.setattr(mod, "_send",
+                        lambda subject, p: sent.append(subject) or send_rc)
+    return mod, shadow, sent
+
+
+def test_first_25_marker_does_not_silence_the_oos_alert(tmp_path, monkeypatch):
+    mod, shadow, sent = _alert_script(tmp_path, monkeypatch, OOS_BIN)
+    # The live state since 2026-11-02: first-25 already alerted as "bin".
+    (shadow / "v2_verdict_alerted.json").write_text('{"verdict": "bin"}')
+    assert mod.main() == 0
+    assert len(sent) == 1 and "OUT-OF-SAMPLE" in sent[0]
+    marker = json.loads((shadow / "v2_oos_verdict_alerted.json").read_text())
+    assert marker["verdict"] == "bin" and marker["sample_n"] == V2_OOS_VERDICT_N
+    # Second night: nothing new, nothing sent.
+    assert mod.main() == 0 and len(sent) == 1
+
+
+def test_failed_send_leaves_no_marker_so_it_retries(tmp_path, monkeypatch):
+    mod, shadow, sent = _alert_script(tmp_path, monkeypatch, OOS_BIN, send_rc=1)
+    (shadow / "v2_verdict_alerted.json").write_text('{"verdict": "bin"}')
+    assert mod.main() != 0
+    assert not (shadow / "v2_oos_verdict_alerted.json").exists()
+    # Body is on disk for the manager's report even though the email failed.
+    assert list((tmp_path / "state" / "reports").glob("*-V2-OOS-VERDICT.md"))
+
+
+def test_pending_period_sends_nothing(tmp_path, monkeypatch):
+    mod, shadow, sent = _alert_script(
+        tmp_path, monkeypatch, FIRST25 + [row(-40, -1.0)] * 2)
+    (shadow / "v2_verdict_alerted.json").write_text('{"verdict": "bin"}')
+    assert mod.main() == 0 and sent == []

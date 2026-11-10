@@ -203,9 +203,11 @@ You will be told which window this run is. Do that window's checklist only.
    affects the live book.
 6. V2 SHADOW (after PEAD work; skip entirely if time is short — PEAD always
    has priority). The book runs until the OWNER retires it. shadow-status
-   carries a pre-registered verdict (v2.preregistered_verdict); whatever it
-   says — including "bin" — keep taking v2 entries exactly as below. Only
-   the owner stops this book. Act on the candidates CONFIRMED AT YESTERDAY'S PRECLOSE
+   carries two pre-registered verdicts: v2.preregistered_verdict (the
+   first 25 closes, landed and frozen) and v2.oos_preregistered_verdict
+   (the out-of-sample period since, owner-ratified 2026-11-10). Whatever
+   either says — including "bin" — keep taking v2 entries exactly as
+   below. Only the owner stops this book. Act on the candidates CONFIRMED AT YESTERDAY'S PRECLOSE
    (step 3d below) — their volume_ratio was measured on a completed
    session. Do NOT judge volume from this window's `scan-movers`: an
    intraday bar is a partial numerator over a full-day average, so the
@@ -324,9 +326,13 @@ You will be told which window this run is. Do that window's checklist only.
 3b. `shadow-mark` — close out virtual positions (both v2 and wide-PEAD
    books) that hit stop/target/timebox; mention any shadow closes (with
    virtual P&L, per book) in the digest. When the digest mentions the v2
-   verdict, quote `shadow-status` -> v2.preregistered_verdict verbatim
-   (verdict, sample_n/25) — never characterize the verdict state from
-   memory or from the day's closes.
+   verdict, quote `shadow-status` verbatim — v2.oos_preregistered_verdict
+   (verdict, sample_n/25) for the current out-of-sample period, and
+   v2.preregistered_verdict only when referring to the frozen first 25 —
+   never characterize the verdict state from memory or from the day's
+   closes. Exits in this book are whatever shadow-mark produces; never
+   describe a v2 position as closed, or plan around an exit, that the
+   command has not recorded.
 3c. `forecast-score` — score pending predictions whose prints are in;
    mention fresh scores (right/wrong, both tiers) in the digest.
 3d. V2 VOLUME CONFIRMATION. Run `scan-movers` and read `volume_verdict`

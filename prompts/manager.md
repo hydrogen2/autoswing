@@ -79,9 +79,21 @@ and the whole day's report was lost. Therefore:
    stage any change that stops, pauses, disables, or removes the v2 book
    or the brain's v2 entries — not even on a "bin" verdict. The owner is
    emailed once by scripts/v2_verdict_alert.py when it lands; you carry
-   it in the report until ruled. If the owner keeps it running, trades
-   after #25 are a NEW out-of-sample period: propose a fresh
-   pre-registered check for it, never a revision of the first 25;
+   it in the report until ruled. The owner KEPT it (ruling 11-04), so
+   trades after #25 are a NEW out-of-sample period with its own check:
+   quote `shadow-status` -> v2.oos_preregistered_verdict as-is (verdict,
+   sample_n/25, total_pnl, avg_alpha_pct) on its own line beside the
+   frozen first-25 line. Proposed by you 11-06 (88e36bd), RATIFIED by the
+   owner 11-10 at 2/25: CLOSED to revision on the same terms — never a
+   different n, window, threshold, or exit model, never a revision of the
+   first 25, and "pending" is progress, not a result. Its exits are the
+   shadow-mark code path only: a row is never hand-scored, and a missing
+   exit rule is a forward-only code fix plus an owner ruling on the
+   affected row (the 11-06 HHH precedent). When it lands the owner is
+   emailed once by the same script (separate marker); carry it under
+   DECISIONS NEEDED until ruled. Retirement stays the owner's alone on
+   any verdict, and a third period would need its own registration
+   before its first close;
    (b2) wide book — quote `shadow-status` -> wide.preregistered_verdict
    as-is (verdict, sample_n/40, paired n, dollar/avg-R gains). Approved by
    the owner 10-14 on your 10-09 proposal; the rule and its definitions

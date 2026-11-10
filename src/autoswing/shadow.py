@@ -356,8 +356,9 @@ def v2_verdict(rows: list[dict]) -> dict:
 #     2 sessions before the gate-verified next_earnings (582c0c4) --
 #     next_earnings is required on every new v2 row at proposal time; no hand
 #     scoring, no retroactive rewrites.
-# Retiring the book remains the owner's decision alone. CLOSED to revision
-# once the owner approves; changing any of this is a dated, deliberate edit.
+# Retiring the book remains the owner's decision alone. RATIFIED by the owner
+# 2026-11-10 with the period at 2/25 (before close #3 accrued): CLOSED to
+# revision; changing any of this is a dated, deliberate edit.
 V2_OOS_VERDICT_N = 25
 V2_OOS_VERDICT_REGISTERED = "2026-11-06"
 V2_OOS_VERDICT_RULE = (
@@ -472,6 +473,57 @@ def verdict_alert(verdict: dict, already_alerted: dict | None) -> str | None:
         "      after #25 are a NEW, out-of-sample period, not a rescue of the",
         "      old one. So that 'longer' has an end, set a fresh pre-registered",
         "      check for it now (e.g. the next 25 closes, same thresholds).",
+        "",
+        f"Closed so far in total: {verdict.get('closed_total')}.",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def oos_verdict_alert(verdict: dict, already_alerted: dict | None) -> str | None:
+    """Alert body when the post-#25 OUT-OF-SAMPLE verdict is new and
+    non-pending, else None. Same once-per-distinct-verdict contract as
+    verdict_alert, and the same owner ruling behind it ("alert me before
+    dropping it"). A separate function with its own marker file on purpose:
+    the first-25 alert was already sent 2026-11-02, and sharing its marker or
+    wording would let that old alert silence this one (owner 2026-11-10)."""
+    v = verdict.get("verdict")
+    if v in (None, "pending"):
+        return None
+    if already_alerted and already_alerted.get("verdict") == v:
+        return None
+
+    first = verdict.get("period_starts_after_close", V2_VERDICT_N) + 1
+    last = first + verdict.get("sample_n", 0) - 1
+    lines = [
+        f"news-v2 shadow book: OUT-OF-SAMPLE verdict = {v.upper()}",
+        "",
+        "NOTHING HAS BEEN STOPPED. The v2 shadow book keeps running until you",
+        "rule; no agent is permitted to retire, pause, or alter it.",
+        "",
+        "This is the SECOND pre-registered verdict on the book: the period you",
+        "opened on 2026-11-04 by keeping it past the first-25 verdict.",
+        "",
+        f"Rule (registered {verdict.get('registered')}): {verdict.get('rule')}",
+        "",
+        f"Closes #{first}-#{last} ({verdict.get('sample_n')} in the period): "
+        f"total P&L {verdict.get('total_pnl')}, "
+        f"avg alpha {verdict.get('avg_alpha_pct')}% (alpha on "
+        f"{verdict.get('alpha_n')}/{verdict.get('sample_n')} rows).",
+    ]
+    if "total_pnl_ex_best" in verdict:
+        lines.append(f"Without best trade: P&L {verdict['total_pnl_ex_best']}, "
+                     f"avg alpha {verdict.get('avg_alpha_pct_ex_best')}%.")
+    for r in verdict.get("reasons", []):
+        lines.append(f"  - {r}")
+    lines += [
+        "",
+        "Your options:",
+        "  (a) Retire the book.",
+        "  (b) Keep it running. Both verdicts stand as recorded; a third",
+        "      period needs its own pre-registered check before its first",
+        "      close, or 'longer' has no end.",
+        "  (c) On PROMOTION_DISCUSSION only: discuss a live trial. Nothing is",
+        "      promoted automatically, on any verdict.",
         "",
         f"Closed so far in total: {verdict.get('closed_total')}.",
     ]
