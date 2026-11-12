@@ -52,6 +52,13 @@ have entered -- no order disciplined that call. And at the ledger's ~7.5pp
 per-trade alpha spread, 20 extras resolve the gap to roughly +/-2pp, so
 only a large difference can show.
 
+RATIFIED by the owner 2026-11-12, the day it was registered, with the
+sample at 0 extras / 0 taken and no sample position yet opened. The
+ratification covers the bar above and the entry-price mechanic shipped the
+same morning (c51039b: wide virtual entries fill at a fresh price, falling
+back to the delayed broker quote and saying so). CLOSED to revision;
+changing any of this is a dated, deliberate edit.
+
 Nothing here is shared with shadow.py's verdicts on purpose: each
 registration is its own frozen artifact.
 """

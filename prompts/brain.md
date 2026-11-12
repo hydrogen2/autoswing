@@ -374,7 +374,8 @@ You will be told which window this run is. Do that window's checklist only.
    describe a v2 position as closed, or plan around an exit, that the
    command has not recorded. Same rule for the wide book: its first
    verdict is landed and frozen (`no_case`, 11-11); the open question is
-   wide.extras_preregistered_verdict (verdict, extras n/20). Quote it,
+   wide.extras_preregistered_verdict (verdict, extras n/20;
+   owner-ratified 2026-11-12, closed to revision). Quote it,
    and never class a wide close as "extra" or "taken" yourself — the
    command does that from the journal.
 3c. `forecast-score` — score pending predictions whose prints are in;

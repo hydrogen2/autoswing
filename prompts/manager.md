@@ -123,7 +123,9 @@ and the whole day's report was lost. Therefore:
    avg_alpha_pct and total_pnl, and the excluded counts. It asks whether
    the names the live book had no room for (extras) do as well as the
    names it took, both read inside the wide ledger. Registered 11-12
-   before any sample position opened; the rule and its definitions are
+   before any sample position opened and RATIFIED by the owner the same
+   day at 0 sample rows, so do not carry ratification as a decision or
+   re-raise it; the rule and its definitions are
    CLOSED to revision: never a different n, start date, margin, measure
    or classification, and "pending" is progress, not a result. Rows are
    classed by code from the journal: never re-class one by hand, never
