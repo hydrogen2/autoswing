@@ -59,6 +59,25 @@ and the whole day's report was lost. Therefore:
    max 2 entries, skips reasoned, closed trades narrated with realized P&L?
    Flag judgment that looks sloppy (thesis-free entries, ignored flags) —
    don't fix judgment in code, report it.
+   ENTRY PRICING (since 2026-11-12): IB quotes on the paper account are
+   ~15 minutes delayed, so `get-quote` now carries a fresh Yahoo print
+   beside them and journals a `quote.fresh` event per call (ib_last, the
+   fresh price with age_seconds and status, reference_price,
+   reference_basis). The brain prices its limit from reference_price. For
+   each of today's proposals find that name's last `quote.fresh` before
+   it and flag: (a) a reference_basis other than "fresh" that the digest
+   did not name; (b) an entry_limit more than ~0.5% above its
+   reference_price; (c) an approved entry that had not filled by the
+   close (one line: limit, reference price, basis). Also count the day's
+   IN-SESSION `quote.fresh` events by fresh.status: "unavailable" or
+   "stale" on more than the odd thin name means the fresher source is
+   failing and limits are back on old prices. Report that under System
+   as a defect, not a quiet day (the hourly health check logs the same
+   condition as "WARN get-quote: no fresh price in session"). The wide
+   ledger's virtual entries use the same fresh price (`shadow.proposal`
+   -> entry_price_source, with both prices journaled); v2's still use the
+   IB quote, by design, until the owner rules otherwise — do not change
+   it.
 4. **Scoreboard**: read `state/benchmark.jsonl`; compute bot vs VOO since
    inception and note drawdown. Read gate-status. Add TWO attribution lines:
    (a) strategy-only P&L — realized+unrealized excluding losses caused by

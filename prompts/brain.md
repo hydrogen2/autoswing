@@ -58,7 +58,36 @@ From `gate-status` take virtual_equity. Then:
   omitting it costs a rejected proposal — this was a daily stumble
   through 2026-08-11)
 - risk budget = 1% of virtual equity (e.g. $500 on $50k)
-- entry_limit = near last price (limit, never chase more than ~0.5% above)
+- entry_limit: price it from `get-quote <SYM>` -> `reference_price`, never
+  from IB's `last` on its own. IB data on this paper account is DELAYED
+  ABOUT 15 MINUTES (market_data_type 3): its bid/ask/last are where the
+  stock was a quarter-hour ago. At the entry window that is a median 0.6%
+  from the real price and more than 0.5% away half the time, so a limit
+  priced off it can sit under a market that never comes back (DELL 09-03,
+  CBRL 09-24: never filled, both ran to target without us). Since
+  2026-11-12 get-quote also returns `fresh` (Yahoo's latest print with its
+  own as_of, age_seconds and status), `fresh_vs_ib_last_pct`, and
+  `reference_price` / `reference_basis`. Quote the name right before you
+  build its proposal, not minutes earlier, then go by the basis:
+  - "fresh" (or "ib_realtime", should IB data ever be live): limit = near
+    reference_price, never more than ~0.5% above it. The no-chase rule is
+    unchanged; it is now measured from the real price instead of the old
+    one.
+  - "ib_delayed_15m": the fresh source failed (reference_note says why).
+    You are pricing from a 15-minute-old number. Proceed as before (limit
+    near IB last, never more than ~0.5% above it) and name in the digest
+    every proposal priced this way.
+  - "conflict" or "none": there is no price to build a limit from. Find
+    out why (wrong symbol, halt, news) or log-skip the name; never guess.
+  - "market_closed": outside the session no live price exists; both
+    numbers are last-session prints and nothing is priced from them.
+  Then judge the trade at the price you will actually pay. Stop distance
+  and the 2R target are measured from YOUR entry_limit, not from the
+  delayed quote or the scan. If the real price has run so far that the
+  chart-correct stop breaks the ceilings below, that is a stop_geometry
+  skip (log it with entry and stop). Never tighten the stop to rescue it.
+  An entry order is DAY-only: a limit left under a rising market just
+  expires.
 - stop_loss = below the reaction-day low, or entry - ~1x the stock's recent
   daily range. CEILING (revised 2026-08-24): ~8% is the skip line WHEN THE
   RISK BUDGET BINDS. When the POSITION CAP binds first — i.e. cap-limited
@@ -183,7 +212,9 @@ You will be told which window this run is. Do that window's checklist only.
    <SYM>` surfaces same-name history first. Lessons inform judgment;
    they never override the playbook rules or the gate.
 4. For each candidate you judge quality (max 2 new entries per day):
-   `next-earnings <SYM>`, then — BEFORE building the proposal — write the
+   `next-earnings <SYM>` and `get-quote <SYM>` (the limit is priced from
+   its `reference_price`, never from the delayed IB `last` alone — see
+   Sizing), then — BEFORE building the proposal — write the
    strongest one-paragraph bear case for this name in your head (what
    would make this beat fail to drift?). If you cannot refute it in a
    sentence, log-skip it instead. Then build the proposal JSON per the
@@ -204,8 +235,11 @@ You will be told which window this run is. Do that window's checklist only.
    SAME bar and the SAME bracket you would send live, never a looser
    "worth watching" pick. From 2026-11-12 the ledger's registered
    question is whether those extras do as well as the trades you took,
-   so one loose extra corrupts the answer. This opens VIRTUAL positions
-   only and never affects the live book.
+   so one loose extra corrupts the answer; (e) the CLI fills the virtual
+   entry at the fresh price when it has one and returns
+   `entry_price_source` — nothing for you to compute, but name in the
+   digest any wide entry whose source was not "fresh". This opens VIRTUAL
+   positions only and never affects the live book.
 6. V2 SHADOW (after PEAD work; skip entirely if time is short — PEAD always
    has priority). The book runs until the OWNER retires it. shadow-status
    carries two pre-registered verdicts: v2.preregistered_verdict (the
@@ -264,7 +298,8 @@ You will be told which window this run is. Do that window's checklist only.
    beats the raw scanner — log honestly, including skips you're unsure of.
 8. `journal-note` digest: what you proposed and why, what you skipped and
    why (one line each), gate outcomes, shadow entries taken (wide + v2
-   counts).
+   counts), and any limit or wide entry priced WITHOUT a fresh price
+   (name, basis, reason) — "none" when every one was fresh.
 
 ### midday (~12:30 ET)
 1. `gate-status`, `get-positions`, `manage-positions` (report mode), and

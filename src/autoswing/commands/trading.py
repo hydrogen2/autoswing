@@ -7,13 +7,37 @@ import sys
 from ..broker import Broker, BracketProposal
 
 
+def _get_quote(broker: Broker, symbol: str) -> dict:
+    """The IB quote plus a fresh Yahoo print, each with its age, and one
+    reference price to build a limit from (2026-11-12).
+
+    IB data on the paper account is delayed ~15 minutes and nothing said
+    so; entry limits were priced off it. Broker.get_quote stays IB-only
+    (position management and the smoke test read it as before); the
+    fresher source is added here, at the surface the brain reads. Fail
+    soft: when Yahoo has nothing the result says so and falls back to the
+    delayed quote, labelled as delayed.
+    """
+    from ..data.fresh import fresh_price, reference_quote
+
+    result = reference_quote(broker.get_quote(symbol), fresh_price(symbol))
+    broker.journal.record(
+        "quote.fresh", symbol=result.get("symbol") or symbol.upper(),
+        ib_last=result.get("last"), ib_quote_basis=result["ib_quote_basis"],
+        fresh=result["fresh"],
+        fresh_vs_ib_last_pct=result["fresh_vs_ib_last_pct"],
+        reference_price=result["reference_price"],
+        reference_basis=result["reference_basis"])
+    return result
+
+
 def _dispatch(broker: Broker, args):
     if args.command == "get-account":
         return broker.get_account()
     if args.command == "get-positions":
         return broker.get_positions()
     if args.command == "get-quote":
-        return broker.get_quote(args.symbol)
+        return _get_quote(broker, args.symbol)
     if args.command == "place-bracket-order":
         return broker.place_bracket_order(
             BracketProposal(

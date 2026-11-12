@@ -83,6 +83,27 @@ case "$QSTATE" in
   blackout) echo "$(date -Is) WARN get-quote: empty quote — market-data seat likely held by owner's live session" >>"$LOG" ;;
   *)        echo "$(date -Is) FAIL get-quote" >>"$LOG"; echo "$QOUT" | tail -15 >>"$LOG"; FAILS+=("get-quote") ;;
 esac
+# Fresh-price canary (2026-11-12). IB quotes on the paper account are ~15
+# minutes delayed, so entry limits are priced from the Yahoo print that
+# get-quote carries beside them. If that source is down or old DURING the
+# session, limits are quietly back on old prices: a WARN the nightly review
+# counts. Off-hours "stale" is expected and silent. Never a FAIL — the IB
+# quote itself is judged above, and AAPL is too liquid to be a thin name.
+FRESH_WARN=$(echo "$QOUT" | sed -n '/^{/,$p' | python3 -c "
+import json, sys
+try:
+    d = json.load(sys.stdin)
+    if d.get('ok'):
+        f = d['result'].get('fresh')
+        if f is None:
+            print('get-quote returned no fresh block')
+        elif f.get('market_open') and f.get('status') != 'fresh':
+            print('%s: %s' % (f.get('status'), f.get('reason')))
+except Exception:
+    pass")
+if [ -n "$FRESH_WARN" ]; then
+  echo "$(date -Is) WARN get-quote: no fresh price in session ($FRESH_WARN) — entry limits fall back to the 15-min-delayed IB quote" >>"$LOG"
+fi
 run_check "scan-candidates"   uv run autoswing scan-candidates --days-back 2
 run_check "next-earnings"     uv run autoswing next-earnings MSFT
 run_check "manage-positions"  uv run autoswing manage-positions

@@ -37,7 +37,10 @@ def _build_parser() -> argparse.ArgumentParser:
     sub.add_parser("get-account", help="Account summary (net liq, cash, PnL)")
     sub.add_parser("get-positions", help="Open positions and working orders")
 
-    q = sub.add_parser("get-quote", help="Delayed snapshot quote")
+    q = sub.add_parser(
+        "get-quote",
+        help="IB quote (15-min delayed on paper) plus a fresh Yahoo "
+             "price, each with its age, and a reference_price")
     q.add_argument("symbol")
 
     b = sub.add_parser(

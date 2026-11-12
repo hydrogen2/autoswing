@@ -82,6 +82,107 @@ def submit(tmp_path, monkeypatch, account, wide, **overrides):
     return _shadow_propose(broker, Namespace(proposal=str(p), wide=wide))
 
 
+def shadow_proposals(tmp_path):
+    rows = []
+    for f in sorted((tmp_path / "journal").glob("*.jsonl")):
+        rows += [json.loads(line) for line in f.read_text().splitlines()]
+    return [r for r in rows if r["event"] == "shadow.proposal"]
+
+
+def yahoo(price=101.3, status="fresh", age=25, market_open=True, reason=None):
+    return lambda symbol: {
+        "source": "yahoo", "basis": "last_trade", "price": price,
+        "as_of": "2026-11-12T15:04:35+00:00", "age_seconds": age,
+        "status": status, "market_open": market_open,
+        "session": "regular session (closes 16:00 ET)", "reason": reason}
+
+
+class TestWideVirtualEntryPrice:
+    """From 2026-11-12 the wide ledger fills at the fresh price, because the
+    broker quote (FakeBroker: last 100.0) is ~15 minutes old and a virtual
+    fill there can be one no real order could have had."""
+
+    def test_wide_fills_at_the_fresh_price(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("autoswing.data.fresh.fresh_price", yahoo(101.3))
+        r = submit(tmp_path, monkeypatch, empty_account(), wide=True)
+        assert r["entry_price"] == 101.3 and r["entry_price_source"] == "fresh"
+        book = load_book(_shadow_paths(wide=True)[0])
+        assert book["XOM"].entry_price == 101.3
+
+    def test_both_prices_and_ages_are_journaled(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("autoswing.data.fresh.fresh_price", yahoo(101.3))
+        submit(tmp_path, monkeypatch, empty_account(), wide=True)
+        (ev,) = shadow_proposals(tmp_path)
+        res = ev["result"]
+        assert res["entry_price"] == 101.3 and res["entry_price_source"] == "fresh"
+        assert res["entry_pricing"]["ib_last"] == 100.0
+        assert res["entry_pricing"]["fresh"]["age_seconds"] == 25
+        assert res["entry_pricing"]["fresh_vs_ib_last_pct"] == 1.3
+
+    def test_no_fresh_price_falls_back_and_says_so(self, tmp_path, monkeypatch):
+        # conftest keeps Yahoo offline: the old chain applies, labelled.
+        r = submit(tmp_path, monkeypatch, empty_account(), wide=True)
+        assert r["entry_price"] == 100.0 and r["entry_price_source"] == "ib_last"
+        assert r["entry_pricing"]["fresh"]["status"] == "unavailable"
+        (ev,) = shadow_proposals(tmp_path)
+        assert ev["result"]["entry_price_source"] == "ib_last"
+        assert ev["result"]["entry_pricing"]["fresh"]["status"] == "unavailable"
+
+    def test_stale_print_is_not_a_fill_price(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("autoswing.data.fresh.fresh_price",
+                            yahoo(101.3, status="stale", age=900, reason="old"))
+        r = submit(tmp_path, monkeypatch, empty_account(), wide=True)
+        assert r["entry_price"] == 100.0 and r["entry_price_source"] == "ib_last"
+
+    def test_implausible_fresh_price_is_not_a_fill_price(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("autoswing.data.fresh.fresh_price", yahoo(130.0))
+        r = submit(tmp_path, monkeypatch, empty_account(), wide=True)
+        assert r["entry_price"] == 100.0 and r["entry_price_source"] == "ib_last"
+        assert r["entry_pricing"]["reference_basis"] == "conflict"
+
+    def test_v2_keeps_the_broker_quote_and_never_asks_yahoo(self, tmp_path, monkeypatch):
+        # Its out-of-sample registration is mid-sample and closed to
+        # revision: the fill source there is the owner's call.
+        def forbidden(symbol):
+            raise AssertionError("v2 must not fetch a fresh price")
+        monkeypatch.setattr("autoswing.data.fresh.fresh_price", forbidden)
+        r = submit(tmp_path, monkeypatch, empty_account(), wide=False)
+        assert r["entry_price"] == 100.0 and r["entry_price_source"] == "ib_last"
+        assert "entry_pricing" not in r
+        (ev,) = shadow_proposals(tmp_path)
+        assert "entry_pricing" not in ev["result"]
+
+    def test_empty_broker_quote_and_no_fresh_price_uses_the_limit(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(FakeBroker, "get_quote",
+                            lambda self, symbol: {"last": None, "close": None})
+        r = submit(tmp_path, monkeypatch, empty_account(), wide=True)
+        assert r["entry_price"] == 100.0 and r["entry_price_source"] == "entry_limit"
+
+    @pytest.mark.parametrize("wide", [True, False])
+    def test_ib_no_data_sentinel_is_never_a_fill_price(self, tmp_path, monkeypatch, wide):
+        # Outside the session IB answers last=-1.0, which is truthy.
+        monkeypatch.setattr(FakeBroker, "get_quote",
+                            lambda self, symbol: {"last": -1.0, "close": 99.5})
+        r = submit(tmp_path, monkeypatch, empty_account(), wide=wide)
+        assert r["entry_price"] == 99.5 and r["entry_price_source"] == "ib_close"
+
+    def test_seat_blackout_still_fills_at_the_fresh_price(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(FakeBroker, "get_quote",
+                            lambda self, symbol: {"last": None, "close": None})
+        monkeypatch.setattr("autoswing.data.fresh.fresh_price", yahoo(101.3))
+        r = submit(tmp_path, monkeypatch, empty_account(), wide=True)
+        assert r["entry_price"] == 101.3 and r["entry_price_source"] == "fresh"
+
+    def test_rejected_proposal_prices_nothing(self, tmp_path, monkeypatch):
+        def forbidden(symbol):
+            raise AssertionError("no quote for a rejected proposal")
+        monkeypatch.setattr("autoswing.data.fresh.fresh_price", forbidden)
+        r = submit(tmp_path, monkeypatch, empty_account(), wide=True,
+                   next_earnings_date="unknown")
+        assert not r["approved"] and r["entry_price"] is None
+        assert r["entry_price_source"] is None and "entry_pricing" not in r
+
+
 class TestWideCapacityBypass:
     def test_capacity_exhaustion_does_not_block_wide(self, tmp_path, monkeypatch):
         r = submit(tmp_path, monkeypatch, full_account(), wide=True)

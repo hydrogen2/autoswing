@@ -16,6 +16,47 @@ def _shadow_paths(wide: bool = False):
     return d / "positions.json", d / "ledger.jsonl"
 
 
+def _virtual_entry(broker: Broker, proposal, wide: bool):
+    """(price, source, pricing detail) for a virtual fill.
+
+    The broker quote on the paper account is ~15 minutes delayed. A virtual
+    fill at that price can be one no real order could have had (DELL 09-03
+    and CBRL 09-24: both ran away from a limit priced off it). From
+    2026-11-12 the WIDE ledger therefore fills at the fresh price when one
+    is available, and records which source it used; when none is, it falls
+    back to the old chain and says so.
+
+    v2 is deliberately left on the broker quote: its out-of-sample
+    registration is mid-sample and closed to revision, and a change of
+    fill source there is the owner's decision, not a side effect.
+    """
+    from ..data.fresh import FRESH, fresh_price, positive_price, reference_quote
+
+    quote = broker.get_quote(proposal.symbol)
+    ib_price, ib_source = proposal.entry_limit, "entry_limit"
+    for key in ("last", "close"):
+        # IB answers -1 for "no data" outside the session; -1.0 is truthy,
+        # and it is not a price (guard added 2026-11-12, no row affected).
+        value = positive_price(quote.get(key))
+        if value is not None:
+            ib_price, ib_source = value, f"ib_{key}"
+            break
+    if not wide:
+        return ib_price, ib_source, None
+
+    ref = reference_quote(quote, fresh_price(proposal.symbol))
+    pricing = {
+        "ib_last": quote.get("last"),
+        "ib_quote_basis": ref["ib_quote_basis"],
+        "fresh": ref["fresh"],
+        "fresh_vs_ib_last_pct": ref["fresh_vs_ib_last_pct"],
+        "reference_basis": ref["reference_basis"],
+    }
+    if ref["reference_basis"] == FRESH:
+        return ref["reference_price"], "fresh", pricing
+    return ib_price, ib_source, pricing
+
+
 def _shadow_propose(broker: Broker, args):
     """Full gate evaluation, virtual position on approval. NEVER places.
 
@@ -50,10 +91,12 @@ def _shadow_propose(broker: Broker, args):
     accepted = not blocking_failures
 
     entry_price = None
+    entry_source = None
+    pricing = None
     opened = False
     if accepted:
-        quote = broker.get_quote(proposal.symbol)
-        entry_price = quote.get("last") or quote.get("close") or proposal.entry_limit
+        entry_price, entry_source, pricing = _virtual_entry(
+            broker, proposal, wide)
         pos_path, _ = _shadow_paths(wide=wide)
         book = load_book(pos_path)
         if proposal.symbol.upper() not in book:
@@ -77,16 +120,24 @@ def _shadow_propose(broker: Broker, args):
         "approved": accepted,
         "opened_virtual": opened,
         "entry_price": entry_price,
+        "entry_price_source": entry_source,
         "decision": decision.to_dict(),
     }
     result["capacity_failures_informational"] = capacity_failures
-    broker.journal.record("shadow.proposal", proposal=payload, result={
+    journaled = {
         "wide": wide,
         "approved": accepted, "opened_virtual": opened,
         "entry_price": entry_price,
+        "entry_price_source": entry_source,
         "failed_rules": blocking_failures,
         "capacity_failures_informational": capacity_failures,
-    })
+    }
+    if pricing is not None:
+        # Both prices and their ages, so any later read of the ledger can
+        # count the rows that opened on a fallback instead of assuming none.
+        result["entry_pricing"] = pricing
+        journaled["entry_pricing"] = pricing
+    broker.journal.record("shadow.proposal", proposal=payload, result=journaled)
     return result
 
 
