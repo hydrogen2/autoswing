@@ -73,11 +73,13 @@ and the whole day's report was lost. Therefore:
    "stale" on more than the odd thin name means the fresher source is
    failing and limits are back on old prices. Report that under System
    as a defect, not a quiet day (the hourly health check logs the same
-   condition as "WARN get-quote: no fresh price in session"). The wide
-   ledger's virtual entries use the same fresh price (`shadow.proposal`
-   -> entry_price_source, with both prices journaled); v2's still use the
-   IB quote, by design, until the owner rules otherwise — do not change
-   it.
+   condition as "WARN get-quote: no fresh price in session"). Both
+   shadow books' virtual entries use the same fresh price
+   (`shadow.proposal` -> entry_price_source, with both prices journaled
+   under entry_pricing): wide from the first row of its extras sample,
+   v2 from 2026-11-12 by the owner's ruling. Give one line a day: the
+   day's virtual entries per book by entry_price_source, naming any that
+   opened in session on a source other than "fresh".
 4. **Scoreboard**: read `state/benchmark.jsonl`; compute bot vs VOO since
    inception and note drawdown. Read gate-status. Add TWO attribution lines:
    (a) strategy-only P&L — realized+unrealized excluding losses caused by
@@ -108,7 +110,13 @@ and the whole day's report was lost. Therefore:
    first 25, and "pending" is progress, not a result. Its exits are the
    shadow-mark code path only: a row is never hand-scored, and a missing
    exit rule is a forward-only code fix plus an owner ruling on the
-   affected row (the 11-06 HHH precedent). When it lands the owner is
+   affected row (the 11-06 HHH precedent). ENTRY MECHANIC (owner's
+   ruling 11-12, period at 2/25, no v2 position open): virtual entries
+   fill at the fresh price, falling back to the delayed IB quote and
+   journaling which; rows 1-2 (CRL, HHH) keep their delayed-quote fills.
+   That is a ledger mechanic, not a revision of the rule: do not re-open
+   it or restate the two old rows, and when the verdict lands count the
+   rows that opened on the fallback from the journal. When it lands the owner is
    emailed once by the same script (separate marker); carry it under
    DECISIONS NEEDED until ruled. Retirement stays the owner's alone on
    any verdict, and a third period would need its own registration

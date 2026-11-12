@@ -359,6 +359,15 @@ def v2_verdict(rows: list[dict]) -> dict:
 # Retiring the book remains the owner's decision alone. RATIFIED by the owner
 # 2026-11-10 with the period at 2/25 (before close #3 accrued): CLOSED to
 # revision; changing any of this is a dated, deliberate edit.
+#
+# 2026-11-12, owner's ruling ("go ahead"), period still at 2/25 with no v2
+# position open: virtual ENTRIES fill at a fresh price when one is at most
+# five minutes old and fall back to the ~15-minute-delayed broker quote
+# otherwise, each proposal journaling which (commands/shadow._virtual_entry).
+# A ledger mechanic, not a revision: sample, criteria and exit model above
+# are unchanged. Rows 1-2 (CRL, HHH) keep their delayed-quote fills; when
+# the verdict is read, count the rows that opened on the fallback from the
+# journal (shadow.proposal -> entry_price_source).
 V2_OOS_VERDICT_N = 25
 V2_OOS_VERDICT_REGISTERED = "2026-11-06"
 V2_OOS_VERDICT_RULE = (

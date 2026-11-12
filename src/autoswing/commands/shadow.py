@@ -16,19 +16,21 @@ def _shadow_paths(wide: bool = False):
     return d / "positions.json", d / "ledger.jsonl"
 
 
-def _virtual_entry(broker: Broker, proposal, wide: bool):
-    """(price, source, pricing detail) for a virtual fill.
+def _virtual_entry(broker: Broker, proposal):
+    """(price, source, pricing detail) for a virtual fill, either book.
 
     The broker quote on the paper account is ~15 minutes delayed. A virtual
     fill at that price can be one no real order could have had (DELL 09-03
     and CBRL 09-24: both ran away from a limit priced off it). From
-    2026-11-12 the WIDE ledger therefore fills at the fresh price when one
-    is available, and records which source it used; when none is, it falls
-    back to the old chain and says so.
+    2026-11-12 both shadow books therefore fill at the fresh price when one
+    is available, and record which source was used; when none is, they
+    fall back to the broker-quote chain and say so.
 
-    v2 is deliberately left on the broker quote: its out-of-sample
-    registration is mid-sample and closed to revision, and a change of
-    fill source there is the owner's decision, not a side effect.
+    Wide: from the first row of its extras sample (c51039b). v2: by the
+    owner's ruling later the same day, with its out-of-sample period at
+    2/25 and no v2 position open. Rows 1-2 of that period (CRL, HHH) keep
+    their delayed-quote fills; every later row is priced here. Neither
+    registered rule (sample, criteria, exit model) changes.
     """
     from ..data.fresh import FRESH, fresh_price, positive_price, reference_quote
 
@@ -41,8 +43,6 @@ def _virtual_entry(broker: Broker, proposal, wide: bool):
         if value is not None:
             ib_price, ib_source = value, f"ib_{key}"
             break
-    if not wide:
-        return ib_price, ib_source, None
 
     ref = reference_quote(quote, fresh_price(proposal.symbol))
     pricing = {
@@ -95,8 +95,7 @@ def _shadow_propose(broker: Broker, args):
     pricing = None
     opened = False
     if accepted:
-        entry_price, entry_source, pricing = _virtual_entry(
-            broker, proposal, wide)
+        entry_price, entry_source, pricing = _virtual_entry(broker, proposal)
         pos_path, _ = _shadow_paths(wide=wide)
         book = load_book(pos_path)
         if proposal.symbol.upper() not in book:

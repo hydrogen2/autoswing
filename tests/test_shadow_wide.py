@@ -97,68 +97,80 @@ def yahoo(price=101.3, status="fresh", age=25, market_open=True, reason=None):
         "session": "regular session (closes 16:00 ET)", "reason": reason}
 
 
-class TestWideVirtualEntryPrice:
-    """From 2026-11-12 the wide ledger fills at the fresh price, because the
+BOTH_BOOKS = pytest.mark.parametrize("wide", [True, False], ids=["wide", "v2"])
+
+
+class TestVirtualEntryPrice:
+    """From 2026-11-12 both shadow books fill at the fresh price, because the
     broker quote (FakeBroker: last 100.0) is ~15 minutes old and a virtual
-    fill there can be one no real order could have had."""
+    fill there can be one no real order could have had. Wide from the first
+    row of its extras sample; v2 by the owner's ruling the same day."""
 
-    def test_wide_fills_at_the_fresh_price(self, tmp_path, monkeypatch):
+    @BOTH_BOOKS
+    def test_fills_at_the_fresh_price(self, tmp_path, monkeypatch, wide):
         monkeypatch.setattr("autoswing.data.fresh.fresh_price", yahoo(101.3))
-        r = submit(tmp_path, monkeypatch, empty_account(), wide=True)
+        r = submit(tmp_path, monkeypatch, empty_account(), wide=wide)
         assert r["entry_price"] == 101.3 and r["entry_price_source"] == "fresh"
-        book = load_book(_shadow_paths(wide=True)[0])
+        book = load_book(_shadow_paths(wide=wide)[0])
         assert book["XOM"].entry_price == 101.3
+        assert load_book(_shadow_paths(wide=not wide)[0]) == {}
 
-    def test_both_prices_and_ages_are_journaled(self, tmp_path, monkeypatch):
+    @BOTH_BOOKS
+    def test_both_prices_and_ages_are_journaled(self, tmp_path, monkeypatch, wide):
         monkeypatch.setattr("autoswing.data.fresh.fresh_price", yahoo(101.3))
-        submit(tmp_path, monkeypatch, empty_account(), wide=True)
+        submit(tmp_path, monkeypatch, empty_account(), wide=wide)
         (ev,) = shadow_proposals(tmp_path)
         res = ev["result"]
+        assert res["wide"] is wide
         assert res["entry_price"] == 101.3 and res["entry_price_source"] == "fresh"
         assert res["entry_pricing"]["ib_last"] == 100.0
         assert res["entry_pricing"]["fresh"]["age_seconds"] == 25
         assert res["entry_pricing"]["fresh_vs_ib_last_pct"] == 1.3
 
-    def test_no_fresh_price_falls_back_and_says_so(self, tmp_path, monkeypatch):
+    @BOTH_BOOKS
+    def test_no_fresh_price_falls_back_and_says_so(self, tmp_path, monkeypatch, wide):
         # conftest keeps Yahoo offline: the old chain applies, labelled.
-        r = submit(tmp_path, monkeypatch, empty_account(), wide=True)
+        r = submit(tmp_path, monkeypatch, empty_account(), wide=wide)
         assert r["entry_price"] == 100.0 and r["entry_price_source"] == "ib_last"
         assert r["entry_pricing"]["fresh"]["status"] == "unavailable"
         (ev,) = shadow_proposals(tmp_path)
         assert ev["result"]["entry_price_source"] == "ib_last"
         assert ev["result"]["entry_pricing"]["fresh"]["status"] == "unavailable"
 
-    def test_stale_print_is_not_a_fill_price(self, tmp_path, monkeypatch):
+    @BOTH_BOOKS
+    def test_stale_print_is_not_a_fill_price(self, tmp_path, monkeypatch, wide):
         monkeypatch.setattr("autoswing.data.fresh.fresh_price",
                             yahoo(101.3, status="stale", age=900, reason="old"))
-        r = submit(tmp_path, monkeypatch, empty_account(), wide=True)
+        r = submit(tmp_path, monkeypatch, empty_account(), wide=wide)
         assert r["entry_price"] == 100.0 and r["entry_price_source"] == "ib_last"
+        assert r["entry_pricing"]["fresh"]["status"] == "stale"
 
-    def test_implausible_fresh_price_is_not_a_fill_price(self, tmp_path, monkeypatch):
+    @BOTH_BOOKS
+    def test_implausible_fresh_price_is_not_a_fill_price(self, tmp_path, monkeypatch, wide):
         monkeypatch.setattr("autoswing.data.fresh.fresh_price", yahoo(130.0))
-        r = submit(tmp_path, monkeypatch, empty_account(), wide=True)
+        r = submit(tmp_path, monkeypatch, empty_account(), wide=wide)
         assert r["entry_price"] == 100.0 and r["entry_price_source"] == "ib_last"
         assert r["entry_pricing"]["reference_basis"] == "conflict"
 
-    def test_v2_keeps_the_broker_quote_and_never_asks_yahoo(self, tmp_path, monkeypatch):
-        # Its out-of-sample registration is mid-sample and closed to
-        # revision: the fill source there is the owner's call.
-        def forbidden(symbol):
-            raise AssertionError("v2 must not fetch a fresh price")
-        monkeypatch.setattr("autoswing.data.fresh.fresh_price", forbidden)
-        r = submit(tmp_path, monkeypatch, empty_account(), wide=False)
+    @BOTH_BOOKS
+    def test_market_closed_keeps_the_broker_quote(self, tmp_path, monkeypatch, wide):
+        # Off-hours the last Yahoo print is old by construction: calm label,
+        # same fill as before the change.
+        monkeypatch.setattr("autoswing.data.fresh.fresh_price", yahoo(
+            101.3, status="stale", age=50000, market_open=False,
+            reason="market closed"))
+        r = submit(tmp_path, monkeypatch, empty_account(), wide=wide)
         assert r["entry_price"] == 100.0 and r["entry_price_source"] == "ib_last"
-        assert "entry_pricing" not in r
-        (ev,) = shadow_proposals(tmp_path)
-        assert "entry_pricing" not in ev["result"]
+        assert r["entry_pricing"]["reference_basis"] == "market_closed"
 
-    def test_empty_broker_quote_and_no_fresh_price_uses_the_limit(self, tmp_path, monkeypatch):
+    @BOTH_BOOKS
+    def test_empty_broker_quote_and_no_fresh_price_uses_the_limit(self, tmp_path, monkeypatch, wide):
         monkeypatch.setattr(FakeBroker, "get_quote",
                             lambda self, symbol: {"last": None, "close": None})
-        r = submit(tmp_path, monkeypatch, empty_account(), wide=True)
+        r = submit(tmp_path, monkeypatch, empty_account(), wide=wide)
         assert r["entry_price"] == 100.0 and r["entry_price_source"] == "entry_limit"
 
-    @pytest.mark.parametrize("wide", [True, False])
+    @BOTH_BOOKS
     def test_ib_no_data_sentinel_is_never_a_fill_price(self, tmp_path, monkeypatch, wide):
         # Outside the session IB answers last=-1.0, which is truthy.
         monkeypatch.setattr(FakeBroker, "get_quote",
@@ -166,18 +178,20 @@ class TestWideVirtualEntryPrice:
         r = submit(tmp_path, monkeypatch, empty_account(), wide=wide)
         assert r["entry_price"] == 99.5 and r["entry_price_source"] == "ib_close"
 
-    def test_seat_blackout_still_fills_at_the_fresh_price(self, tmp_path, monkeypatch):
+    @BOTH_BOOKS
+    def test_seat_blackout_still_fills_at_the_fresh_price(self, tmp_path, monkeypatch, wide):
         monkeypatch.setattr(FakeBroker, "get_quote",
                             lambda self, symbol: {"last": None, "close": None})
         monkeypatch.setattr("autoswing.data.fresh.fresh_price", yahoo(101.3))
-        r = submit(tmp_path, monkeypatch, empty_account(), wide=True)
+        r = submit(tmp_path, monkeypatch, empty_account(), wide=wide)
         assert r["entry_price"] == 101.3 and r["entry_price_source"] == "fresh"
 
-    def test_rejected_proposal_prices_nothing(self, tmp_path, monkeypatch):
+    @BOTH_BOOKS
+    def test_rejected_proposal_prices_nothing(self, tmp_path, monkeypatch, wide):
         def forbidden(symbol):
             raise AssertionError("no quote for a rejected proposal")
         monkeypatch.setattr("autoswing.data.fresh.fresh_price", forbidden)
-        r = submit(tmp_path, monkeypatch, empty_account(), wide=True,
+        r = submit(tmp_path, monkeypatch, empty_account(), wide=wide,
                    next_earnings_date="unknown")
         assert not r["approved"] and r["entry_price"] is None
         assert r["entry_price_source"] is None and "entry_pricing" not in r

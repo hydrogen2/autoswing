@@ -258,7 +258,11 @@ You will be told which window this run is. Do that window's checklist only.
    set by the instrument; skip if > ~8%).
    Build the same proposal JSON with "strategy": "news-v2" and submit via
    `echo '<json>' | uv run autoswing shadow-propose -`. This opens a
-   VIRTUAL position only — shadow never places real orders. One-line
+   VIRTUAL position only — shadow never places real orders. As with the
+   wide book, the CLI fills the virtual entry at the fresh price when it
+   has one and returns `entry_price_source` (v2 from 2026-11-12, the
+   owner's ruling): nothing for you to compute, but name in the digest
+   any v2 entry whose source was not "fresh". One-line
    thesis per shadow entry in the digest; also note quality names you
    passed on and why.
 6b. EARNINGS-TONE LEDGER (measurement only — these fields must NEVER
@@ -298,7 +302,7 @@ You will be told which window this run is. Do that window's checklist only.
    beats the raw scanner — log honestly, including skips you're unsure of.
 8. `journal-note` digest: what you proposed and why, what you skipped and
    why (one line each), gate outcomes, shadow entries taken (wide + v2
-   counts), and any limit or wide entry priced WITHOUT a fresh price
+   counts), and any limit, wide or v2 entry priced WITHOUT a fresh price
    (name, basis, reason) — "none" when every one was fresh.
 
 ### midday (~12:30 ET)
