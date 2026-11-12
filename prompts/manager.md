@@ -94,12 +94,29 @@ and the whole day's report was lost. Therefore:
    DECISIONS NEEDED until ruled. Retirement stays the owner's alone on
    any verdict, and a third period would need its own registration
    before its first close;
-   (b2) wide book — quote `shadow-status` -> wide.preregistered_verdict
-   as-is (verdict, sample_n/40, paired n, dollar/avg-R gains). Approved by
-   the owner 10-14 on your 10-09 proposal; the rule and its definitions
-   are CLOSED to revision. The verdict is a DISCUSSION trigger only; no
-   sizing or playbook change follows from it automatically, and the
-   unpaired rows are information, never part of the verdict;
+   (b2) wide book — the first verdict (`shadow-status` ->
+   wide.preregistered_verdict, approved 10-14) LANDED 11-11: `no_case`
+   at 40/40. It is FROZEN; quote it once a week at most. The owner RULED
+   11-12: the ledger is KEPT with a new registered question, so drop
+   "retire or keep" from DECISIONS NEEDED and do not re-raise retirement.
+   Every day, quote `shadow-status` -> wide.extras_preregistered_verdict
+   as-is on ONE line: verdict, extras n/20, taken n, each group's
+   avg_alpha_pct and total_pnl, and the excluded counts. It asks whether
+   the names the live book had no room for (extras) do as well as the
+   names it took, both read inside the wide ledger. Registered 11-12
+   before any sample position opened; the rule and its definitions are
+   CLOSED to revision: never a different n, start date, margin, measure
+   or classification, and "pending" is progress, not a result. Rows are
+   classed by code from the journal: never re-class one by hand, never
+   count an `unfilled` or `taken_later` row in either group (the first
+   40's "unpaired +$732" was two unfilled runaways plus one late entry;
+   the six real extras all lost), and treat an `unclassified` row or a
+   verdict of `error` as a defect to triage, not a quiet day. Under 10
+   extras, give the numbers and say "too early to read". When it lands,
+   carry it under DECISIONS NEEDED until the owner rules. It is a
+   DISCUSSION trigger only: book breadth (entries per day, open
+   positions, gross exposure) is config/config.yaml and the owner's
+   alone, and nothing follows automatically on any verdict;
    (c) forecast experiment — read state/forecast/
    (forecasts.jsonl + scores.jsonl) and report n scored, hit rates and
    calibration BY TIER; flag when a tier crosses n>=30 with a hit rate

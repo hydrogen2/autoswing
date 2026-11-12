@@ -199,8 +199,13 @@ You will be told which window this run is. Do that window's checklist only.
    wide-log names skipped for quality, news, stop-geometry, or liquidity
    reasons — those are not strategy-qualifying; (c) quantity is
    standardized by the CLI, so the sizing math doesn't matter here —
-   reuse the proposal as-is. This opens VIRTUAL positions only and never
-   affects the live book.
+   reuse the proposal as-is; (d) a capacity-only name must be one you
+   would have placed a live order for today had there been room: the
+   SAME bar and the SAME bracket you would send live, never a looser
+   "worth watching" pick. From 2026-11-12 the ledger's registered
+   question is whether those extras do as well as the trades you took,
+   so one loose extra corrupts the answer. This opens VIRTUAL positions
+   only and never affects the live book.
 6. V2 SHADOW (after PEAD work; skip entirely if time is short — PEAD always
    has priority). The book runs until the OWNER retires it. shadow-status
    carries two pre-registered verdicts: v2.preregistered_verdict (the
@@ -332,7 +337,11 @@ You will be told which window this run is. Do that window's checklist only.
    never characterize the verdict state from memory or from the day's
    closes. Exits in this book are whatever shadow-mark produces; never
    describe a v2 position as closed, or plan around an exit, that the
-   command has not recorded.
+   command has not recorded. Same rule for the wide book: its first
+   verdict is landed and frozen (`no_case`, 11-11); the open question is
+   wide.extras_preregistered_verdict (verdict, extras n/20). Quote it,
+   and never class a wide close as "extra" or "taken" yourself — the
+   command does that from the journal.
 3c. `forecast-score` — score pending predictions whose prints are in;
    mention fresh scores (right/wrong, both tiers) in the digest.
 3d. V2 VOLUME CONFIRMATION. Run `scan-movers` and read `volume_verdict`

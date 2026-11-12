@@ -182,8 +182,15 @@ def _shadow_status():
             from ..shadow import wide_verdict
 
             live = {c.id: c for c in extract_closed_trades(PROJECT_ROOT / "journal")}
-            out[label]["preregistered_verdict"] = wide_verdict(
-                load_ledger(ledger_path), live)
+            wide_rows = load_ledger(ledger_path)
+            out[label]["preregistered_verdict"] = wide_verdict(wide_rows, live)
+            # Second period (owner kept the ledger 2026-11-12, registered the
+            # same day): extras against taken trades, both inside the wide
+            # ledger. Quoted, never reinterpreted; the first block is frozen.
+            from ..wide_extras import wide_extras_verdict_safe
+
+            out[label]["extras_preregistered_verdict"] = wide_extras_verdict_safe(
+                wide_rows, PROJECT_ROOT / "journal")
     # Hedged-book line (registered 2026-11-10): the live book's daily returns
     # with a fixed half-of-equity index short. A measurement riding on this
     # command because it is local-only and already read nightly; it is not a
