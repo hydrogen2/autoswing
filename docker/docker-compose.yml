@@ -16,8 +16,14 @@ services:
       # from outside this machine.
       - "127.0.0.1:4002:4004"  # paper (container maps paper->4004 internally)
       - "127.0.0.1:4001:4003"  # live (unused until Phase 5)
-    volumes:
-      - ibgateway_settings:/home/ibgateway
-
-volumes:
-  ibgateway_settings:
+    # No volume over /home/ibgateway (removed 2026-11-14). That path holds the
+    # gateway program itself (Jts/ibgateway/<version>), IBC and the start
+    # scripts, and Docker fills a named volume from the image only once, when
+    # the volume is first created. With one mounted there, a newer image kept
+    # starting the July install (10.45.1h): `pull` + `up -d` changed the image
+    # and nothing else, and the new image's version variable pointed at a
+    # directory the volume did not have. Nothing in there needs to outlive the
+    # container: IBC rebuilds the settings from the environment above at every
+    # login. Upgrade = `docker compose pull && docker compose up -d`.
+    # If settings ever must persist, mount a volume on a settings-only path
+    # and set TWS_SETTINGS_PATH to it. Never mount over the home again.
