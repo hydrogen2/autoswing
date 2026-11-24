@@ -97,6 +97,25 @@ def _dispatch_data(config, journal: Journal, args):
             for k in ("entries", "stops", "targets", "market_exits")
         } | {"unmatched": result["unmatched"]})
         return result
+    if args.command == "regime-outcomes":
+        from ..config import PROJECT_ROOT
+        from ..lessons import extract_closed_trades
+        from ..regime import (
+            extract_quantities, load_benchmark_marks, regime_outcomes,
+        )
+
+        trades = extract_closed_trades(PROJECT_ROOT / "journal")
+        result = regime_outcomes(
+            trades,
+            load_benchmark_marks(PROJECT_ROOT / "state" / "benchmark.jsonl"),
+            extract_quantities(PROJECT_ROOT / "journal"),
+        )
+        journal.record("research.regime_outcomes", summary={
+            b: {k: v for k, v in stats.items()
+                if k not in ("rows", "unscored")}
+            for b, stats in result["buckets"].items()
+        } | {"n_closed": result["n_closed"]})
+        return result
     if args.command == "tone-log":
         return _tone_log(args, journal)
     if args.command == "tone-outcomes":

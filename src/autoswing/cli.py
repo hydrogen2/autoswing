@@ -20,7 +20,7 @@ DATA_COMMANDS = (
     "shadow-mark", "shadow-status", "scan-upcoming",
     "forecast-log", "forecast-score", "forecast-stats",
     "exit-counterfactuals", "log-skip", "skip-outcomes", "insider-outcomes",
-    "fill-quality",
+    "regime-outcomes", "fill-quality",
     "backtest", "lesson-pending", "lesson-log", "lessons", "trim-compare",
     "signal-log", "signal-score", "signal-stats", "signal-ingest",
     "tone-log", "tone-outcomes",
@@ -218,6 +218,14 @@ def _build_parser() -> argparse.ArgumentParser:
         help="research: fwd-15d drift of enriched candidates by Form 4 "
         "cluster flag and notional bucket (instrument #8; pre-registered "
         "verdict at n>=100 unique symbol-days, closed to revision)",
+    )
+
+    sub.add_parser(
+        "regime-outcomes",
+        help="research: closed live trades bucketed by tape at entry "
+        "(stressed = VIX >= 25 or SPY <= -4%% vs 20dma, calm, untagged; "
+        "backlog #6, registered 2026-11-20, owner-approved 2026-11-24; "
+        "descriptive only, no pass bar, buckets closed to revision)",
     )
 
     bt = sub.add_parser(
